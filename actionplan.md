@@ -27,27 +27,27 @@
     *   [x] Set up basic routing (e.g., using `react-router-dom`).
     *   [x] **Milestone:** Basic frontend app running locally with placeholder pages.
 
-*   [ ] **Backend - Model Service (Python + FastAPI):**
-    *   Create FastAPI project structure.
-    *   Set up `requirements.txt` (`tensorflow`, `scikit-learn`, `pandas`, `numpy`, `fastapi`, `uvicorn`).
-    *   Create a placeholder `/health` endpoint.
-    *   **Milestone:** Basic FastAPI service running locally.
+*   [x] **Backend - Model Service (Python + FastAPI):**
+    *   [x] Create FastAPI project structure.
+    *   [x] Set up `requirements.txt` (`tensorflow`, `scikit-learn`, `pandas`, `numpy`, `fastapi`, `uvicorn`).
+    *   [x] Create a placeholder `/health` endpoint.
+    *   [x] **Milestone:** Basic FastAPI service running locally.
 
-*   [ ] **Backend - Main API (Node.js/Express OR another FastAPI instance):**
-    *   Choose between Node.js/Express or another FastAPI. Set up the basic project.
-    *   Create a placeholder `/health` endpoint.
-    *   **Milestone:** Basic main API service running locally.
+*   [x] **Backend - Main API (Node.js/Express OR another FastAPI instance):**
+    *   [x] Choose between Node.js/Express or another FastAPI. Set up the basic project.
+    *   [x] Create a placeholder `/health` endpoint.
+    *   [x] **Milestone:** Basic main API service running locally.
 
-*   [ ] **Database Setup (Supabase):**
-    *   Create a new project on Supabase.
-    *   Define initial table schemas (e.g., `assets`, `rul_predictions`, `users` if auth needed early).
-    *   **Milestone:** Supabase project created, connection strings obtained.
+*   [x] **Database Setup (Supabase):**
+    *   [x] Create a new project on Supabase.
+    *   [x] Define initial table schemas (e.g., `assets`, `rul_predictions`, `users` if auth needed early).
+    *   [x] **Milestone:** Supabase project created, connection strings obtained.
 
-*   [ ] **Essential Model Artifacts Preparation:**
-    *   Locate your best trained Keras model file (e.g., `best_cnnlstm_model_ultimate_pipeline.keras`).
-    *   Save your `feature_scaler` and `rul_scaler` objects (e.g., using `joblib.dump`).
-    *   Document the exact `feature_cols` list and `sequence_length` used for the model.
-    *   **Milestone:** Model and scalers are accessible and documented.
+*   [x] **Essential Model Artifacts Preparation:**
+    *   [x] Locate your best trained Keras model file (e.g., `best_cnnlstm_model_ultimate_pipeline.keras`).
+    *   [x] Save your `feature_scaler` and `rul_scaler` objects (e.g., using `joblib.dump`).
+    *   [x] Document the exact `feature_cols` list and `sequence_length` used for the model.
+    *   [x] **Milestone:** Model and scalers are accessible and documented.
 
 *   [ ] **Version Control:**
     *   Commit initial project structures to Git.
