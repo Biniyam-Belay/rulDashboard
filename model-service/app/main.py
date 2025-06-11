@@ -6,6 +6,7 @@ import pandas as pd
 import joblib
 from tensorflow.keras.models import load_model
 import os
+import time
 
 app = FastAPI()
 
@@ -63,6 +64,20 @@ PredictionRequest = conlist(SensorDataPoint, min_length=SEQUENCE_LENGTH, max_len
 class PredictionResponse(BaseModel):
     predicted_rul: float
 
+# New bulk prediction types
+class BulkPredictionRequest(BaseModel):
+    sequences: List[PredictionRequest]  # List of sequences, each containing 50 SensorDataPoints
+
+class BulkPredictionResponse(BaseModel):
+    predictions: List[PredictionResponse]  # List of predictions
+    total_processed: int
+    failed_count: int
+    processing_time_seconds: float
+    predictions: List[PredictionResponse]  # List of predictions
+    total_processed: int
+    failed_count: int
+    processing_time_seconds: float
+
 def preprocess_data(sequence_data: List[SensorDataPoint]) -> np.ndarray:
     """
     Preprocesses the raw sensor data sequence:
@@ -116,6 +131,58 @@ def preprocess_data(sequence_data: List[SensorDataPoint]) -> np.ndarray:
     scaled_features = feature_scaler.transform(df)
     return scaled_features
 
+def preprocess_data_batch(sequences_data: List[List[SensorDataPoint]]) -> np.ndarray:
+    """
+    Vectorized preprocessing for multiple sequences at once.
+    More efficient than processing sequences individually.
+    
+    Args:
+        sequences_data: List of sequences, each containing SEQUENCE_LENGTH SensorDataPoint objects
+    
+    Returns:
+        np.ndarray: Shape (num_sequences, SEQUENCE_LENGTH, num_features)
+    """
+    all_dataframes = []
+    
+    # Convert all sequences to DataFrames in batch
+    for sequence_data in sequences_data:
+        df = pd.DataFrame([item.model_dump() for item in sequence_data])
+        
+        # Rename columns
+        df.rename(columns={
+            'bearing_tem': 'bearing tem',
+            'env_temp': 'env temp'
+        }, inplace=True)
+        
+        all_dataframes.append(df)
+    
+    # Concatenate all dataframes for vectorized operations
+    combined_df = pd.concat(all_dataframes, keys=range(len(all_dataframes)))
+    
+    # Vectorized feature engineering
+    try:
+        combined_df['log_bearing tem'] = np.log(combined_df['bearing tem'] + 1e-9)
+        combined_df['abs_x_direction'] = np.abs(combined_df['x_direction'])
+        combined_df['log_abs_x_direction'] = np.log(combined_df['abs_x_direction'] + 1e-9)
+        combined_df['abs_y_direction'] = np.abs(combined_df['y_direction'])
+        combined_df['log_abs_y_direction'] = np.log(combined_df['abs_y_direction'] + 1e-9)
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"Missing column during batch feature engineering: {str(e)}")
+    
+    # Select and order columns
+    try:
+        combined_df = combined_df[FINAL_FEATURE_COLS]
+    except KeyError as e:
+        missing_cols = list(set(FINAL_FEATURE_COLS) - set(combined_df.columns))
+        raise HTTPException(status_code=400, detail=f"Missing columns after batch feature engineering: {missing_cols}")
+    
+    # Vectorized scaling
+    scaled_features = feature_scaler.transform(combined_df)
+    
+    # Reshape back to (num_sequences, SEQUENCE_LENGTH, num_features)
+    num_sequences = len(sequences_data)
+    return scaled_features.reshape(num_sequences, SEQUENCE_LENGTH, -1)
+
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
@@ -148,3 +215,119 @@ async def predict_rul(request_data: PredictionRequest):
         # Log the exception e for debugging
         print(f"Unexpected error during prediction: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error during prediction: {str(e)}")
+
+@app.post("/predict_bulk", response_model=BulkPredictionResponse)
+async def predict_rul_bulk(request_data: BulkPredictionRequest):
+    """
+    Process multiple sequences in a single vectorized operation for maximum performance.
+    Each sequence should contain exactly 50 sensor data points.
+    """
+    if model is None or feature_scaler is None or rul_scaler is None:
+        raise HTTPException(status_code=503, detail="Model or scalers not loaded. Service might be starting up.")
+
+    start_time = time.time()
+    failed_count = 0
+
+    try:
+        # Convert all sequences to a single batch for vectorized processing
+        batch_sequences = []
+        valid_indices = []
+        
+        for i, sequence in enumerate(request_data.sequences):
+            try:
+                # Process single sequence
+                processed_sequence = preprocess_data(sequence)  # Shape: (SEQUENCE_LENGTH, num_features)
+                batch_sequences.append(processed_sequence)
+                valid_indices.append(i)
+            except Exception as e:
+                print(f"Error preprocessing sequence {i}: {e}")
+                failed_count += 1
+                # We'll handle failed sequences later
+        
+        # Vectorized prediction for all valid sequences at once
+        predictions = []
+        if batch_sequences:
+            # Stack all sequences into a single batch: (batch_size, SEQUENCE_LENGTH, num_features)
+            model_input = np.stack(batch_sequences, axis=0)
+            
+            print(f"Processing batch of {model_input.shape[0]} sequences with shape {model_input.shape}")
+            
+            # Single model prediction call for entire batch
+            scaled_predictions = model.predict(model_input, verbose=0) # Shape: (batch_size, 1)
+            
+            # Vectorized inverse transform
+            predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+            
+            # Create response objects
+            valid_predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]
+        else:
+            valid_predictions = []
+        
+        # Reconstruct results maintaining original order
+        result_predictions = []
+        valid_idx = 0
+        
+        for i in range(len(request_data.sequences)):
+            if i in valid_indices:
+                result_predictions.append(valid_predictions[valid_idx])
+                valid_idx += 1
+            else:
+                result_predictions.append(PredictionResponse(predicted_rul=-1.0))
+
+        processing_time = time.time() - start_time
+        sequences_per_second = len(request_data.sequences) / processing_time if processing_time > 0 else 0
+        
+        print(f"Vectorized processing: {len(request_data.sequences)} sequences in {processing_time:.3f}s ({sequences_per_second:.1f} seq/s)")
+        
+        return BulkPredictionResponse(
+            predictions=result_predictions,
+            total_processed=len(request_data.sequences),
+            failed_count=failed_count,
+            processing_time_seconds=processing_time
+        )
+
+    except Exception as e:
+        print(f"Unexpected error during vectorized bulk prediction: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error during bulk prediction: {str(e)}")
+
+@app.post("/predict_bulk_fast", response_model=BulkPredictionResponse)
+async def predict_rul_bulk_fast(request_data: BulkPredictionRequest):
+    """
+    Ultra-fast vectorized processing for maximum throughput.
+    Processes all sequences in a single batch operation.
+    """
+    if model is None or feature_scaler is None or rul_scaler is None:
+        raise HTTPException(status_code=503, detail="Model or scalers not loaded. Service might be starting up.")
+
+    start_time = time.time()
+
+    try:
+        # Vectorized preprocessing for entire batch
+        model_input = preprocess_data_batch(request_data.sequences)
+        
+        print(f"Fast processing batch of {model_input.shape[0]} sequences with shape {model_input.shape}")
+        
+        # Single vectorized model prediction
+        scaled_predictions = model.predict(model_input, verbose=0)  # Shape: (batch_size, 1)
+        
+        # Vectorized inverse transform
+        predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+        
+        # Create response objects
+        predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]
+
+        processing_time = time.time() - start_time
+        sequences_per_second = len(request_data.sequences) / processing_time if processing_time > 0 else 0
+        
+        print(f"Fast vectorized processing: {len(request_data.sequences)} sequences in {processing_time:.3f}s ({sequences_per_second:.1f} seq/s)")
+        
+        return BulkPredictionResponse(
+            predictions=predictions,
+            total_processed=len(request_data.sequences),
+            failed_count=0,  # No individual sequence failures in vectorized approach
+            processing_time_seconds=processing_time
+        )
+
+    except Exception as e:
+        print(f"Error in fast bulk prediction: {e}")
+        raise HTTPException(status_code=500, detail=f"Fast bulk prediction failed: {str(e)}")

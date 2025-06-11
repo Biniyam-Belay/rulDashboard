@@ -183,20 +183,132 @@ export function useDataDriftReport() {
       // if (!response.ok) throw new Error('Failed to fetch data drift report');
       // return response.json();
 
-      // Placeholder data:
+      // Placeholder data corrected to match DataDriftReport type:
       await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-      return { // Actual object matching DataDriftReport type
-        reportTimestamp: '2025-05-01T00:00:00Z',
-        modelVersion: 'v1.1.0',
-        overallDriftScore: 0.1234, // Changed from overall_drift_status, now a number
-        numberOfDriftingFeatures: 2, // Added this field
-        featureMetrics: [ // Changed from features, and updated field names
-          { featureName: 'sensor_1_avg', driftScore: 0.15, hasDrifted: true }, // Renamed fields
-          { featureName: 'sensor_2_std', driftScore: 0.05, hasDrifted: false },// Renamed fields
-          { featureName: 'sensor_3_max', driftScore: 0.22, hasDrifted: true }, // Renamed fields
-          { featureName: 'vibration_peak', driftScore: 0.08, hasDrifted: false }, // Renamed fields
+      return {
+        report_timestamp: '2025-05-01T00:00:00Z',
+        model_version: 'v1.1.0',
+        overall_drift_status: 'low', // Corrected: string literal type
+        features: [ // Corrected: field name is 'features'
+          { feature_name: 'sensor_1_avg', drift_score: 0.15, is_drifting: true }, // Corrected: is_drifting
+          { feature_name: 'sensor_2_std', drift_score: 0.05, is_drifting: false },// Corrected: is_drifting
+          { feature_name: 'sensor_3_max', drift_score: 0.22, is_drifting: true }, // Corrected: is_drifting
+          { feature_name: 'vibration_peak', drift_score: 0.08, is_drifting: false }, // Corrected: is_drifting
         ],
       };
     },
   });
+}
+
+// Function to send sensor data for RUL prediction
+export async function predictRulForAsset(assetId: string, sensorData: any): Promise<any> {
+  // Log the data we're sending for debugging
+  console.log('Sending sensor data to backend:', sensorData[0]);
+  
+  const response = await fetch(`${API_BASE_URL}/assets/${assetId}/predict_rul`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ 
+      sensor_data: sensorData
+    }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to get RUL prediction (undefined error message from backend)';
+    try {
+      const errorData = await response.json();
+      if (errorData && errorData.error) {
+        errorMessage = errorData.error;
+      } else if (errorData && errorData.message) { // Fallback for other possible error formats
+        errorMessage = errorData.message;
+      }
+      // If the error response is plain text and not JSON
+      if (response.headers.get("content-type")?.includes("text/plain") || response.headers.get("content-type")?.includes("text/html")) {
+        const textError = await response.text();
+        if (textError) errorMessage = textError;
+      }
+
+    } catch (e) {
+      console.error('Failed to parse error response from backend:', e);
+      // errorMessage remains the default or could be updated from response.text() if JSON parsing fails
+      try {
+        const textError = await response.text();
+        if (textError) errorMessage = textError;
+      } catch (textErr) {
+        console.error('Failed to get text from error response:', textErr)
+      }
+    }
+    throw new Error(errorMessage);
+  }
+  return response.json();
+}
+
+// Bulk function to send multiple sequences for RUL prediction
+export async function predictRulForAssetBulk(assetId: string, sequences: any[][]): Promise<any> {
+  console.log(`Sending ${sequences.length} sequences to backend for bulk prediction`);
+  
+  const response = await fetch(`${API_BASE_URL}/assets/${assetId}/predict_rul_bulk`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ 
+      sequences: sequences
+    }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to get bulk RUL predictions (undefined error message from backend)';
+    try {
+      const errorData = await response.json();
+      if (errorData && errorData.error) {
+        errorMessage = errorData.error;
+      } else if (errorData && errorData.message) {
+        errorMessage = errorData.message;
+      }
+    } catch (parseError) {
+      const text = await response.text();
+      if (text) {
+        errorMessage = text;
+      }
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
+}
+
+// Ultra-fast bulk function for maximum throughput
+export async function predictRulForAssetBulkFast(assetId: string, sequences: any[][]): Promise<any> {
+  console.log(`Ultra-fast processing ${sequences.length} sequences for asset ${assetId}`);
+  
+  const response = await fetch(`${API_BASE_URL}/assets/${assetId}/predict_rul_bulk_fast`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ 
+      sequences: sequences
+    }),
+  });
+
+  if (!response.ok) {
+    let errorMessage = 'Failed to get fast bulk RUL predictions';
+    try {
+      const errorData = await response.json();
+      if (errorData && errorData.error) {
+        errorMessage = errorData.error;
+      }
+    } catch (parseError) {
+      const text = await response.text();
+      if (text) {
+        errorMessage = text;
+      }
+    }
+    throw new Error(errorMessage);
+  }
+
+  return response.json();
 }

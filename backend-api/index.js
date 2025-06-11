@@ -5,7 +5,8 @@ const axios = require('axios');
 const cors = require('cors');
 
 const app = express();
-app.use(express.json()); // Middleware to parse JSON bodies
+app.use(express.json({ limit: '50mb' })); // Increased limit for bulk processing
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cors());
 const port = 3001;
 
@@ -149,6 +150,26 @@ app.post('/assets/:id/predict_rul', async (req, res) => {
         // 1. Call the Model Service's /predict endpoint
         const modelServiceUrl = process.env.MODEL_SERVICE_URL || 'http://localhost:8001';
         
+        // Enhanced logging - log first and last items
+        console.log('Sending to model service - first item:', JSON.stringify(sensor_data[0]));
+        console.log('Sending to model service - last item:', JSON.stringify(sensor_data[sensor_data.length - 1]));
+        console.log('Number of items in sensor_data:', sensor_data.length);
+        
+        // Check all required fields in each item
+        const missingFields = [];
+        sensor_data.forEach((item, index) => {
+            const requiredFields = ['x_direction', 'y_direction', 'bearing_tem', 'env_temp'];
+            const missing = requiredFields.filter(field => item[field] === undefined);
+            if (missing.length > 0) {
+                missingFields.push({ index, missing });
+            }
+        });
+        
+        if (missingFields.length > 0) {
+            console.error('Missing required fields in some items:', missingFields);
+        }
+        
+        console.log('Calling model service at:', `${modelServiceUrl}/predict`);
         const response = await axios.post(`${modelServiceUrl}/predict`, sensor_data); // Send the array directly
         const predicted_rul = response.data.predicted_rul;
 
@@ -212,15 +233,267 @@ app.post('/assets/:id/predict_rul', async (req, res) => {
             // that falls out of the range of 2xx
             console.error('Error data:', error.response.data);
             console.error('Error status:', error.response.status);
-            return res.status(error.response.status).json({ error: error.response.data.detail || error.message });
+            console.error('Error headers:', error.response.headers);
+            
+            // More detailed error message
+            let detailedError = error.message;
+            if (error.response.data) {
+                if (typeof error.response.data === 'object') {
+                    detailedError = JSON.stringify(error.response.data);
+                } else if (typeof error.response.data === 'string') {
+                    detailedError = error.response.data;
+                } else if (error.response.data.detail) {
+                    detailedError = error.response.data.detail;
+                }
+            }
+            
+            return res.status(error.response.status).json({ error: detailedError });
         } else if (error.request) {
             // The request was made but no response was received
             console.error('Error request:', error.request);
-            return res.status(500).json({ error: 'No response from model service.' });
+            return res.status(500).json({ error: 'No response from model service. Check if the model service is running.' });
         } else {
             // Something happened in setting up the request that triggered an Error
-            return res.status(500).json({ error: 'Internal server error while predicting RUL.' });
+            console.error('Error details:', error);
+            return res.status(500).json({ error: `Internal server error while predicting RUL: ${error.message}` });
         }
+    }
+});
+
+// Bulk prediction endpoint for processing multiple sequences at once
+app.post('/assets/:id/predict_rul_bulk', async (req, res) => {
+    const { id } = req.params;
+    const { sequences } = req.body; // Expecting an array of sequences, each containing 50 sensor data points
+
+    if (!sequences || !Array.isArray(sequences) || sequences.length === 0) {
+        return res.status(400).json({ error: 'Invalid sequences: Must be a non-empty array of sequences.' });
+    }
+
+    // Validate each sequence
+    for (let i = 0; i < sequences.length; i++) {
+        const sequence = sequences[i];
+        if (!Array.isArray(sequence) || sequence.length !== 50) {
+            return res.status(400).json({ 
+                error: `Invalid sequence at index ${i}: Must be an array of exactly 50 sensor data points.` 
+            });
+        }
+    }
+
+    try {
+        const modelServiceUrl = process.env.MODEL_SERVICE_URL || 'http://localhost:8001';
+        
+        console.log(`Processing bulk prediction for asset ${id} with ${sequences.length} sequences`);
+        
+        // Call the Model Service's bulk predict endpoint
+        const response = await axios.post(`${modelServiceUrl}/predict_bulk`, {
+            sequences: sequences
+        });
+        
+        const { predictions, total_processed, failed_count, processing_time_seconds } = response.data;
+        
+        // Prepare bulk insert data for Supabase
+        const predictionInserts = [];
+        const alertInserts = [];
+        
+        for (let i = 0; i < predictions.length; i++) {
+            const prediction = predictions[i];
+            const predicted_rul = prediction.predicted_rul;
+            
+            // Skip failed predictions (marked as -1)
+            if (predicted_rul < 0) {
+                continue;
+            }
+            
+            predictionInserts.push({
+                asset_id: id,
+                predicted_rul: predicted_rul,
+                prediction_timestamp: new Date(),
+                input_features_snapshot: sequences[i]
+            });
+            
+            // Generate alerts for low RUL values
+            if (predicted_rul < 20000) {
+                alertInserts.push({
+                    asset_id: id,
+                    severity: 'critical',
+                    message: `Asset RUL is critically low: ${predicted_rul}.`,
+                    rul_at_alert: predicted_rul,
+                    triggering_condition: 'RUL_THRESHOLD_CRITICAL'
+                });
+            } else if (predicted_rul < 60000) {
+                alertInserts.push({
+                    asset_id: id,
+                    severity: 'warning',
+                    message: `Asset RUL is low: ${predicted_rul}.`,
+                    rul_at_alert: predicted_rul,
+                    triggering_condition: 'RUL_THRESHOLD_WARNING'
+                });
+            }
+        }
+        
+        // Bulk database operations
+        let predictionData = [];
+        if (predictionInserts.length > 0) {
+            const { data, error: predictionError } = await supabase
+                .from('rul_predictions')
+                .insert(predictionInserts)
+                .select();
+                
+            if (predictionError) {
+                console.error('Supabase error storing bulk RUL predictions:', predictionError);
+                return res.status(500).json({ error: predictionError.message });
+            }
+            predictionData = data;
+        }
+        
+        // Bulk insert alerts if any
+        if (alertInserts.length > 0) {
+            const { error: alertError } = await supabase
+                .from('alerts')
+                .insert(alertInserts);
+                
+            if (alertError) {
+                console.error('Supabase error creating bulk alerts:', alertError);
+                // Don't fail the entire operation for alert errors
+            }
+        }
+        
+        res.status(201).json({ 
+            message: 'Bulk RUL prediction successful and stored.',
+            data: {
+                predictions: predictions,
+                total_processed: total_processed,
+                failed_count: failed_count,
+                processing_time_seconds: processing_time_seconds,
+                stored_predictions: predictionData.length,
+                generated_alerts: alertInserts.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Error in bulk /predict_rul endpoint:', error.message);
+        if (error.response) {
+            console.error('Error data:', error.response.data);
+            console.error('Error status:', error.response.status);
+            
+            let detailedError = error.message;
+            if (error.response.data) {
+                if (typeof error.response.data === 'object') {
+                    detailedError = JSON.stringify(error.response.data);
+                } else if (typeof error.response.data === 'string') {
+                    detailedError = error.response.data;
+                } else if (error.response.data.detail) {
+                    detailedError = error.response.data.detail;
+                }
+            }
+            
+            return res.status(error.response.status).json({ error: detailedError });
+        } else if (error.request) {
+            console.error('Error request:', error.request);
+            return res.status(500).json({ error: 'No response from model service. Check if the model service is running.' });
+        } else {
+            console.error('Error details:', error);
+            return res.status(500).json({ error: `Internal server error while predicting RUL: ${error.message}` });
+        }
+    }
+});
+
+// Ultra-fast bulk prediction endpoint for maximum throughput
+app.post('/assets/:id/predict_rul_bulk_fast', async (req, res) => {
+    const { id } = req.params;
+    const { sequences } = req.body;
+
+    if (!sequences || !Array.isArray(sequences) || sequences.length === 0) {
+        return res.status(400).json({ error: 'Invalid sequences: Must be a non-empty array of sequences.' });
+    }
+
+    // Basic validation - skip detailed per-sequence validation for speed
+    if (sequences.some(seq => !Array.isArray(seq) || seq.length !== 50)) {
+        return res.status(400).json({ error: 'One or more sequences have incorrect length (expected 50 sensor data points).' });
+    }
+
+    try {
+        const modelServiceUrl = process.env.MODEL_SERVICE_URL || 'http://localhost:8001';
+        
+        console.log(`Ultra-fast processing for asset ${id} with ${sequences.length} sequences`);
+        
+        // Call the fast bulk predict endpoint
+        const response = await axios.post(`${modelServiceUrl}/predict_bulk_fast`, {
+            sequences: sequences
+        });
+        
+        const { predictions, total_processed, failed_count, processing_time_seconds } = response.data;
+        
+        console.log(`Fast bulk processing completed: ${total_processed} sequences in ${processing_time_seconds.toFixed(3)}s (${(total_processed/processing_time_seconds).toFixed(1)} seq/s)`);
+
+        // Prepare bulk insert data for Supabase (optimized)
+        const predictionInserts = predictions.map((prediction, index) => ({
+            asset_id: id,
+            predicted_rul: prediction.predicted_rul,
+            prediction_timestamp: new Date(),
+            input_features_snapshot: sequences[index]
+        })).filter(p => p.predicted_rul > 0); // Filter out failed predictions
+
+        // Generate alerts for low RUL values (vectorized)
+        const alertInserts = predictionInserts
+            .filter(p => p.predicted_rul < 60000)
+            .map(p => ({
+                asset_id: id,
+                severity: p.predicted_rul < 20000 ? 'critical' : 'warning',
+                message: `Asset RUL is ${p.predicted_rul < 20000 ? 'critically' : ''} low: ${p.predicted_rul}.`,
+                rul_at_alert: p.predicted_rul,
+                triggering_condition: p.predicted_rul < 20000 ? 'RUL_THRESHOLD_CRITICAL' : 'RUL_THRESHOLD_WARNING'
+            }));
+        
+        // Bulk database operations
+        let predictionData = [];
+        if (predictionInserts.length > 0) {
+            const { data, error: predictionError } = await supabase
+                .from('rul_predictions')
+                .insert(predictionInserts)
+                .select();
+                
+            if (predictionError) {
+                console.error('Supabase error storing fast bulk predictions:', predictionError);
+                return res.status(500).json({ error: predictionError.message });
+            }
+            predictionData = data;
+        }
+        
+        // Bulk insert alerts
+        if (alertInserts.length > 0) {
+            const { error: alertError } = await supabase
+                .from('alerts')
+                .insert(alertInserts);
+                
+            if (alertError) {
+                console.error('Supabase error creating fast bulk alerts:', alertError);
+            }
+        }
+        
+        res.status(201).json({ 
+            message: 'Ultra-fast bulk RUL prediction completed.',
+            data: {
+                predictions: predictions,
+                total_processed: total_processed,
+                failed_count: failed_count,
+                processing_time_seconds: processing_time_seconds,
+                throughput_sequences_per_second: (total_processed / processing_time_seconds).toFixed(1),
+                stored_predictions: predictionData.length,
+                generated_alerts: alertInserts.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Error in fast bulk predict endpoint:', error.message);
+        if (error.response) {
+            let detailedError = error.message;
+            if (error.response.data && error.response.data.detail) {
+                detailedError = error.response.data.detail;
+            }
+            return res.status(error.response.status).json({ error: detailedError });
+        }
+        return res.status(500).json({ error: `Fast bulk prediction failed: ${error.message}` });
     }
 });
 
