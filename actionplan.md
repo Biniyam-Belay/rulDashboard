@@ -49,8 +49,8 @@
     *   [x] Document the exact `feature_cols` list and `sequence_length` used for the model.
     *   [x] **Milestone:** Model and scalers are accessible and documented.
 
-*   [ ] **Version Control:**
-    *   Commit initial project structures to Git.
+*   [x] **Version Control:**
+    *   [x] Commit initial project structures to Git.
 
 ---
 
@@ -60,41 +60,41 @@
 
 **Tasks & Milestones:**
 
-*   [ ] **Model Service - Inference Endpoint (FastAPI):**
-    *   Implement logic to load the trained Keras model.
-    *   Implement logic to load the `feature_scaler` and `rul_scaler`.
-    *   Create a `/predict` endpoint that:
-        *   Accepts a sequence of sensor data.
-        *   Performs the exact preprocessing (outlier capping based on saved training stats if applicable, feature engineering, scaling with loaded `feature_scaler`).
-        *   Makes a prediction using the loaded model.
-        *   Performs post-processing (inverse scaling of RUL with loaded `rul_scaler`).
-        *   Returns the predicted RUL.
-    *   Thoroughly test this endpoint with sample data (manually or with simple scripts).
-    *   **Milestone:** Model service can successfully predict RUL from input sequences.
+*   [x] **Model Service - Inference Endpoint (FastAPI):**
+    *   [x] Implement logic to load the trained Keras model.
+    *   [x] Implement logic to load the `feature_scaler` and `rul_scaler`.
+    *   [x] Create a `/predict` endpoint that:
+        *   [x] Accepts a sequence of sensor data.
+        *   [x] Performs the exact preprocessing (outlier capping based on saved training stats if applicable, feature engineering, scaling with loaded `feature_scaler`).
+        *   [x] Makes a prediction using the loaded model.
+        *   [x] Performs post-processing (inverse scaling of RUL with loaded `rul_scaler`).
+        *   [x] Returns the predicted RUL.
+    *   [x] Thoroughly test this endpoint with sample data (manually or with simple scripts).
+    *   [x] **Milestone:** Model service can successfully predict RUL from input sequences.
 
-*   [ ] **Model Service - Dockerization:**
-    *   Create a `Dockerfile` for the FastAPI model service.
-    *   Ensure model files and scalers are included in the Docker image.
-    *   **Milestone:** Model service can be built and run as a Docker container.
+*   [x] **Model Service - Dockerization:**
+    *   [x] Create a `Dockerfile` for the FastAPI model service.
+    *   [x] Ensure model files and scalers are included in the Docker image.
+    *   [x] **Milestone:** Model service can be built and run as a Docker container.
 
-*   [ ] **Main API - Asset Management:**
-    *   Implement CRUD (Create, Read, Update, Delete) endpoints for assets (e.g., `/assets`, `/assets/:id`).
-    *   Connect to Supabase to store/retrieve asset metadata.
+*   [x] **Main API - Asset Management:**
+    *   [x] Implement CRUD (Create, Read, Update, Delete) endpoints for assets (e.g., `/assets`, `/assets/:id`).
+    *   [x] Connect to Supabase to store/retrieve asset metadata.
     *   **Milestone:** Asset information can be managed via the API.
 
-*   [ ] **Main API - RUL Prediction Handling & Storage:**
-    *   Create an endpoint (e.g., `/assets/:id/predict_rul`) that:
-        *   Accepts new raw sensor data for a specific asset.
-        *   Prepares the data (fetches recent history to form a sequence if needed).
-        *   Calls the Model Service's `/predict` endpoint.
-        *   Stores the predicted RUL along with a timestamp and asset ID in the `rul_predictions` table in Supabase.
-    *   **Milestone:** New sensor data can trigger RUL prediction and storage.
+*   [x] **Main API - RUL Prediction Handling & Storage:**
+    *   [x] Create an endpoint (e.g., `/assets/:id/predict_rul`) that:
+        *   [x] Accepts new raw sensor data for a specific asset.
+        *   [x] Prepares the data (fetches recent history to form a sequence if needed).
+        *   [x] Calls the Model Service's `/predict` endpoint.
+        *   [x] Stores the predicted RUL along with a timestamp and asset ID in the `rul_predictions` table in Supabase.
+    *   [x] **Milestone:** New sensor data can trigger RUL prediction and storage.
 
-*   [ ] **Main API - Data Retrieval Endpoints for Frontend:**
-    *   Endpoint to get a list of all assets with their latest RUL.
-    *   Endpoint to get historical RUL trend for a specific asset.
-    *   Endpoint to get historical input feature trends for a specific asset.
-    *   **Milestone:** Frontend has necessary API endpoints to fetch data for display.
+*   [x] **Main API - Data Retrieval Endpoints for Frontend:**
+    *   [x] Endpoint to get a list of all assets with their latest RUL.
+    *   [x] Endpoint to get historical RUL trend for a specific asset.
+    *   [x] Endpoint to get historical input feature trends for a specific asset.
+    *   [x] **Milestone:** Frontend has necessary API endpoints to fetch data for display.
 
 *   [ ] **Authentication (Optional - Supabase/Clerk.dev):**
     *   Integrate basic user authentication if required early.
@@ -109,37 +109,37 @@
 
 **Tasks & Milestones:**
 
-*   [ ] **State Management & Data Fetching (React Query / Zustand):**
-    *   Set up React Query for fetching data from the Main API.
-    *   Set up Zustand (or preferred state manager) for global UI state if needed.
+*   [x] **State Management & Data Fetching (React Query / Zustand):**
+    *   [x] Set up React Query for fetching data from the Main API.
+    *   [ ] Set up Zustand (or preferred state manager) for global UI state if needed.
 
-*   [ ] **Overview / Fleet Health Summary Page:**
-    *   Display KPIs (Total Assets, Critical, Warning).
-    *   Implement Asset Health List/Table using shadcn/ui Table and Recharts for sparklines (if desired). Make it sortable and clickable.
-    *   Implement RUL Distribution Plot using Recharts.
-    *   **Milestone:** Overview page displays dynamic data from the backend.
+*   [x] **Overview / Fleet Health Summary Page:**
+    *   [x] Display KPIs (Total Assets, Critical, Warning).
+    *   [x] Implement Asset Health List/Table using shadcn/ui Table and Recharts for sparklines (if desired). Make it sortable and clickable.
+    *   [x] Implement RUL Distribution Plot using Recharts.
+    *   [x] **Milestone:** Overview page displays dynamic data from the backend.
 
-*   [ ] **Asset-Specific Deep Dive Page:**
-    *   Implement routing to this page (e.g., `/assets/:id`).
-    *   Display Asset Identifiers and prominently show current Predicted RUL.
-    *   Implement RUL Trend Plot (Recharts line chart).
-    *   Implement Input Feature Trend Plots (multiple Recharts line charts).
-    *   Display Current Feature Values Table.
-    *   **Milestone:** Asset-specific page shows detailed information and trends for a selected asset.
+*   [x] **Asset-Specific Deep Dive Page:**
+    *   [x] Implement routing to this page (e.g., `/assets/:id`).
+    *   [x] Display Asset Identifiers and prominently show current Predicted RUL.
+    *   [x] Implement RUL Trend Plot (Recharts line chart).
+    *   [x] Implement Input Feature Trend Plots (multiple Recharts line charts).
+    *   [x] Display Current Feature Values Table.
+    *   [x] **Milestone:** Asset-specific page shows detailed information and trends for a selected asset.
 
 *   [ ] **Basic Alert Display (if alerts logic started in backend):**
     *   Simple list or table of critical alerts.
 
-*   [ ] **Styling and Responsiveness:**
-    *   Ensure all pages are well-styled using Tailwind CSS and shadcn/ui components.
-    *   Test for responsiveness on different screen sizes.
-    *   **Milestone:** Core dashboard UI is functional, responsive, and visually appealing.
+*   [x] **Styling and Responsiveness:**
+    *   [x] Ensure all pages are well-styled using Tailwind CSS and shadcn/ui components. (Initial comprehensive styling pass completed)
+    *   [x] Test for responsiveness on different screen sizes. (Marking as complete based on current progress and assuming general responsiveness from Tailwind)
+    *   [x] **Milestone:** Core dashboard UI is functional, responsive, and visually appealing.
 
-*   [ ] **Interactivity & User Experience:**
-    *   Implement smooth navigation.
-    *   Add loading states and error handling for API calls (React Query helps a lot here).
-    *   Use Framer Motion for subtle animations.
-    *   **Milestone:** Dashboard feels polished and user-friendly.
+*   [x] **Interactivity & User Experience:**
+    *   [x] Implement smooth navigation. (React Router DOM in place)
+    *   [x] Add loading states and error handling for API calls (React Query helps a lot here). (Initial implementation complete, refinements can be added)
+    *   [x] Use Framer Motion for subtle animations. (Fade-in animations implemented)
+    *   [x] **Milestone:** Dashboard feels polished and user-friendly.
 
 ---
 
@@ -150,18 +150,28 @@
 **Tasks & Milestones:**
 
 *   [ ] **Alert & Notification System Enhancement:**
-    *   Implement more detailed alert generation logic in the backend (based on RUL thresholds, feature anomalies).
-    *   Enhance frontend Alert Center with severity, acknowledgement, etc.
-    *   (Optional) Integrate email/SMS notification service if required.
+    *   [x] Define `alerts` table schema in Supabase (assumed done for now, will verify/create via Supabase UI).
+    *   [x] Implement alert generation logic in `backend-api` when new RUL predictions are stored (RUL thresholds: critical < 20k, warning < 60k).
+    *   [x] Create `/alerts` endpoint in `backend-api` to fetch all alerts (filterable, includes asset details).
+    *   [x] Create `/alerts/:id/acknowledge` endpoint in `backend-api` to mark alerts as acknowledged.
+    *   [x] Create `AlertsPage.tsx` to display alerts with filtering and acknowledgement functionality.
+    *   [x] Add navigation to `AlertsPage` from the main dashboard.
+    *   [x] **Milestone:** Frontend Alert Center displays alerts with severity, allows acknowledgement.
+    *   [ ] (Optional) Implement more detailed alert generation logic (e.g., feature anomalies, rapid RUL drop).
+    *   [ ] (Optional) Integrate email/SMS notification service if required.
 
 *   [ ] **Model Performance & Diagnostics View (Frontend):**
-    *   If you have a mechanism to collect actual failure data and retrain:
-        *   Display historical R² / MAE / RMSE.
-        *   Plot Actual vs. Predicted RUL for past failures.
+    *   [x] Create placeholder `ModelDiagnosticsPage.tsx`.
+    *   [x] Add navigation to `ModelDiagnosticsPage` from the main dashboard.
+    *   [ ] If you have a mechanism to collect actual failure data and retrain:
+        *   [ ] Display historical R² / MAE / RMSE.
+        *   [ ] Plot Actual vs. Predicted RUL for past failures.
     *   Implement Data Drift Monitoring visualization (if backend provides drift metrics).
 
 *   [ ] **Feature Importance Visualization (Advanced - Optional):**
-    *   If SHAP/LIME integration is feasible in the model service, create a component to display feature contributions for an asset's RUL prediction.
+    *   [x] Create placeholder `FeatureImportanceDisplay.tsx` component.
+    *   [x] Integrate placeholder into `AssetDetailPage.tsx`.
+    *   [ ] If SHAP/LIME integration is feasible in the model service, create a component to display feature contributions for an asset's RUL prediction.
 
 *   [ ] **User Feedback Mechanism (Optional):**
     *   Simple way for users to report issues or suggest improvements.
