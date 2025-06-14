@@ -7,35 +7,43 @@ import joblib
 from tensorflow.keras.models import load_model
 import os
 import time
+import sys
 
 app = FastAPI()
 
 # Load model and scalers at startup
 MODEL_DIR = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(MODEL_DIR, "best_cnnlstm_model_ultimate_pipeline.keras")
-FEATURE_SCALER_PATH = os.path.join(MODEL_DIR, "feature_scaler.joblib")
-RUL_SCALER_PATH = os.path.join(MODEL_DIR, "rul_scaler.joblib")
+MODEL_PATH = os.path.join(MODEL_DIR, "june14cnnlstm_model_full_pipeline_206.keras")
+FEATURE_SCALER_PATH = os.path.join(MODEL_DIR, "june14feature_scaler_full_pipeline_206.gz")
+RUL_SCALER_PATH = os.path.join(MODEL_DIR, "june14rul_scaler_full_pipeline_206.gz")
 
 model = None
 feature_scaler = None
 rul_scaler = None
 
 # Expected feature columns by the model, in order
-# From model_details.md
-# original_feature_cols: ['x_direction', 'y_direction', 'bearing tem', 'env temp']
-# engineered_features: ['log_bearing tem', 'abs_x_direction', 'log_abs_x_direction', 'abs_y_direction', 'log_abs_y_direction']
+# This list has been updated to reflect consistent naming and all engineered features.
 FINAL_FEATURE_COLS = [
-    'abs_x_direction', 
-    'abs_y_direction', 
-    'bearing tem', 
-    'env temp', 
-    'log_abs_x_direction', 
-    'log_abs_y_direction', 
-    'log_bearing tem', 
-    'x_direction', 
-    'y_direction'
+    # 9 engineered features, in order:
+    'log_bearing_temperature',
+    'log_abs_x_direction',
+    'log_abs_y_direction',
+    'rolling_mean_x',
+    'rolling_mean_y',
+    'ewma_x',
+    'ewma_y',
+    'delta_x',
+    'delta_y',
+    # 4 original/raw features, in order:
+    'x_direction',
+    'y_direction',
+    'bearing_temperature',
+    'env_temperature'
 ]
+ENGINEERED_FEATURES_FOR_SCALING = FINAL_FEATURE_COLS[:9]
+RAW_FEATURES_NOT_SCALED_BY_THIS_SCALER = FINAL_FEATURE_COLS[9:]
 SEQUENCE_LENGTH = 50
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -55,8 +63,8 @@ async def startup_event():
 class SensorDataPoint(BaseModel):
     x_direction: float
     y_direction: float
-    bearing_tem: float
-    env_temp: float
+    bearing_temperature: float
+    env_temperature: float
 
 # conlist ensures the list has exactly SEQUENCE_LENGTH items
 PredictionRequest = conlist(SensorDataPoint, min_length=SEQUENCE_LENGTH, max_length=SEQUENCE_LENGTH)
@@ -73,115 +81,142 @@ class BulkPredictionResponse(BaseModel):
     total_processed: int
     failed_count: int
     processing_time_seconds: float
-    predictions: List[PredictionResponse]  # List of predictions
-    total_processed: int
-    failed_count: int
-    processing_time_seconds: float
 
 def preprocess_data(sequence_data: List[SensorDataPoint]) -> np.ndarray:
     """
     Preprocesses the raw sensor data sequence:
     1. Converts to DataFrame.
-    2. Renames columns to match feature engineering/model expectations.
-    3. Performs feature engineering.
+    2. Renames columns to standardized names.
+    3. Performs feature engineering using consistent column names.
     4. Orders columns as per FINAL_FEATURE_COLS.
     5. Scales features using the loaded feature_scaler.
     """
-    df = pd.DataFrame([item.model_dump() for item in sequence_data])
-
-    # Rename columns from Pydantic model (snake_case) to match expected names (with spaces)
-    # This aligns with FINAL_FEATURE_COLS and feature engineering steps.
-    df.rename(columns={
-        'bearing_tem': 'bearing tem',
-        'env_temp': 'env temp'
-        # 'x_direction' and 'y_direction' are assumed to be consistent already
-    }, inplace=True)
+    data_dict = {k: v for k, v in sequence_data[0].model_dump().items()}
+    logger.debug(f"preprocess_data: Input data: {data_dict}")
+    df = pd.DataFrame([data_dict])
+    logger.debug(f"preprocess_data: DataFrame created with columns: {df.columns.tolist()}")
 
     # Feature Engineering
-    # Ensure 'bearing tem' is positive for log, add small epsilon for safety if it can be zero or negative.
-    # Assuming 'bearing tem' from sensor is always > 0 based on typical temperature readings.
+    df['log_bearing_temperature'] = np.log1p(df['bearing_temperature'])
+    df['log_abs_x_direction'] = np.log1p(np.abs(df['x_direction']))
+    df['log_abs_y_direction'] = np.log1p(np.abs(df['y_direction']))
+    # For single instance, rolling/ewma/diff might behave differently or produce NaNs if not handled.
+    # We will use simplified versions or ensure they match batch logic if possible.
+    # For simplicity, and given it's a single point, these might be less critical or need historical data not available here.
+    # Let's assume for a single prediction, these might be set to 0 or a recent value if available.
+    # However, to match the batch processing, we should ensure these columns exist.
+    # The scaler expects these columns. If they are all NaNs or zeros, it might be fine.
+    df['rolling_mean_x'] = df['x_direction'] # Simplified for single point
+    df['rolling_mean_y'] = df['y_direction'] # Simplified for single point
+    df['ewma_x'] = df['x_direction']         # Simplified for single point
+    df['ewma_y'] = df['y_direction']         # Simplified for single point
+    df['delta_x'] = 0                        # Simplified for single point
+    df['delta_y'] = 0                        # Simplified for single point
+
+    logger.debug(f"preprocess_data: DataFrame after feature engineering columns: {df.columns.tolist()}")
+
+    # Separate features for scaling
+    df_to_scale = df[ENGINEERED_FEATURES_FOR_SCALING]
+    df_raw_unscaled = df[RAW_FEATURES_NOT_SCALED_BY_THIS_SCALER]
+    logger.debug(f"preprocess_data: df_to_scale columns: {df_to_scale.columns.tolist()}")
+    logger.debug(f"preprocess_data: df_raw_unscaled columns: {df_raw_unscaled.columns.tolist()}")
+
+    # Scale only the engineered features
     try:
-        df['log_bearing tem'] = np.log(df['bearing tem'] + 1e-9) # Add epsilon for safety
+        scaled_engineered_features = feature_scaler.transform(df_to_scale)
+        df_scaled_engineered = pd.DataFrame(scaled_engineered_features, columns=ENGINEERED_FEATURES_FOR_SCALING, index=df_to_scale.index)
+        logger.debug(f"preprocess_data: Scaled engineered features shape: {df_scaled_engineered.shape}")
+    except Exception as e:
+        logger.error(f"Error during feature_scaler.transform in preprocess_data: {e}")
+        logger.error(f"Columns passed to scaler: {df_to_scale.columns.tolist()}")
+        logger.error(f"Scaler expected features: {feature_scaler.feature_names_in_ if hasattr(feature_scaler, 'feature_names_in_') else 'N/A'}")
+        raise
 
-        df['abs_x_direction'] = np.abs(df['x_direction'])
-        df['log_abs_x_direction'] = np.log(df['abs_x_direction'] + 1e-9) # Add epsilon for safety
+    # Concatenate scaled engineered features with unscaled raw features
+    df_processed = pd.concat([df_scaled_engineered, df_raw_unscaled], axis=1)
+    logger.debug(f"preprocess_data: df_processed columns after concat: {df_processed.columns.tolist()}")
 
-        df['abs_y_direction'] = np.abs(df['y_direction'])
-        df['log_abs_y_direction'] = np.log(df['abs_y_direction'] + 1e-9) # Add epsilon for safety
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Missing column during feature engineering. Problem with key: {str(e)}. Current df columns: {list(df.columns)}")
-    
-    # Ensure all columns are present and in the correct order
-    try:
-        df = df[FINAL_FEATURE_COLS]
-    except KeyError as e:
-        missing_cols = list(set(FINAL_FEATURE_COLS) - set(df.columns))
-        raise HTTPException(status_code=400, detail=f"Missing columns after feature engineering. Expected: {FINAL_FEATURE_COLS}. Got: {list(df.columns)}. Missing specifically: {missing_cols}. Original error: {e}")
+    # Ensure final column order
+    df_processed = df_processed[FINAL_FEATURE_COLS]
+    logger.debug(f"preprocess_data: df_processed columns after reordering: {df_processed.columns.tolist()}")
+    logger.debug(f"preprocess_data: df_processed head:\n{df_processed.head()}")
 
-    # --- DEBUGGING ---
-    print("DataFrame columns before scaling:", list(df.columns))
-    if hasattr(feature_scaler, 'feature_names_in_'):
-        print("Scaler expected feature names:", list(feature_scaler.feature_names_in_))
-    else:
-        print("Scaler does not have feature_names_in_ attribute (older scikit-learn version or not fit on DataFrame).")
-        print(f"Scaler expected number of features: {feature_scaler.n_features_in_ if hasattr(feature_scaler, 'n_features_in_') else 'N/A'}")
-    # --- END DEBUGGING ---
+    return df_processed.values.reshape(1, -1) # Reshape for single sample
 
-    # Scale features
-    scaled_features = feature_scaler.transform(df)
-    return scaled_features
 
 def preprocess_data_batch(sequences_data: List[List[SensorDataPoint]]) -> np.ndarray:
     """
     Vectorized preprocessing for multiple sequences at once.
     More efficient than processing sequences individually.
-    
-    Args:
-        sequences_data: List of sequences, each containing SEQUENCE_LENGTH SensorDataPoint objects
-    
-    Returns:
-        np.ndarray: Shape (num_sequences, SEQUENCE_LENGTH, num_features)
     """
     all_dataframes = []
-    
-    # Convert all sequences to DataFrames in batch
     for sequence_data in sequences_data:
         df = pd.DataFrame([item.model_dump() for item in sequence_data])
-        
-        # Rename columns
-        df.rename(columns={
-            'bearing_tem': 'bearing tem',
-            'env_temp': 'env temp'
-        }, inplace=True)
-        
+        print("\n[DEBUG] Raw DataFrame columns (batch):", list(df.columns))
+        epsilon = 1e-6
+        if (df['bearing_temperature'] <= 0).any():
+            min_temp = df['bearing_temperature'].min()
+            df['bearing_temperature_adj_for_log'] = df['bearing_temperature'] - min_temp + epsilon
+        else:
+            df['bearing_temperature_adj_for_log'] = df['bearing_temperature']
+        df['log_bearing_temperature'] = np.log(df['bearing_temperature_adj_for_log'])
+        df['abs_x_direction'] = df['x_direction'].abs()
+        df['log_abs_x_direction'] = np.log(df['abs_x_direction'] + epsilon)
+        df['abs_y_direction'] = df['y_direction'].abs()
+        df['log_abs_y_direction'] = np.log(df['abs_y_direction'] + epsilon)
+        df['rolling_mean_x'] = df['x_direction'].rolling(window=5, min_periods=1).mean()
+        df['rolling_mean_y'] = df['y_direction'].rolling(window=5, min_periods=1).mean()
+        df['ewma_x'] = df['x_direction'].ewm(span=5, adjust=False).mean()
+        df['ewma_y'] = df['y_direction'].ewm(span=5, adjust=False).mean()
+        df['delta_x'] = df['x_direction'].diff().fillna(0)
+        df['delta_y'] = df['y_direction'].diff().fillna(0)
+        print("[DEBUG] After feature engineering columns (batch):", list(df.columns))
+        df.drop(['bearing_temperature_adj_for_log', 'abs_x_direction', 'abs_y_direction'], axis=1, inplace=True)
+        print("[DEBUG] After dropping temp columns (batch):", list(df.columns))
         all_dataframes.append(df)
-    
-    # Concatenate all dataframes for vectorized operations
     combined_df = pd.concat(all_dataframes, keys=range(len(all_dataframes)))
-    
-    # Vectorized feature engineering
     try:
-        combined_df['log_bearing tem'] = np.log(combined_df['bearing tem'] + 1e-9)
-        combined_df['abs_x_direction'] = np.abs(combined_df['x_direction'])
-        combined_df['log_abs_x_direction'] = np.log(combined_df['abs_x_direction'] + 1e-9)
-        combined_df['abs_y_direction'] = np.abs(combined_df['y_direction'])
-        combined_df['log_abs_y_direction'] = np.log(combined_df['abs_y_direction'] + 1e-9)
-    except KeyError as e:
-        raise HTTPException(status_code=400, detail=f"Missing column during batch feature engineering: {str(e)}")
-    
-    # Select and order columns
-    try:
-        combined_df = combined_df[FINAL_FEATURE_COLS]
+        missing_in_combined_df = list(set(FINAL_FEATURE_COLS) - set(combined_df.columns))
+        if missing_in_combined_df:
+            print(f"[ERROR] Columns missing before final selection in batch: {missing_in_combined_df}. Available: {list(combined_df.columns)}")
+            raise HTTPException(status_code=400, detail=f"Columns missing before final selection in batch: {missing_in_combined_df}. Available: {list(combined_df.columns)}")
+        combined_df_features = combined_df[FINAL_FEATURE_COLS]
+        print("[DEBUG] DataFrame columns before scaling (batch, final order):", list(combined_df_features.columns))
     except KeyError as e:
         missing_cols = list(set(FINAL_FEATURE_COLS) - set(combined_df.columns))
-        raise HTTPException(status_code=400, detail=f"Missing columns after batch feature engineering: {missing_cols}")
+        present_cols = list(combined_df.columns)
+        print(f"[ERROR] Column mismatch after batch feature engineering. Expected: {FINAL_FEATURE_COLS}. Got: {present_cols}. Missing: {missing_cols}. Original error: {e}")
+        raise HTTPException(status_code=400, detail=f"Column mismatch after batch feature engineering. Expected: {FINAL_FEATURE_COLS}. Got: {present_cols}. Missing: {missing_cols}. Original error: {e}")
+    if hasattr(feature_scaler, 'feature_names_in_'):
+        print("[DEBUG] Scaler expected feature names (batch):", list(feature_scaler.feature_names_in_))
+    else:
+        print("[DEBUG] Scaler does not have feature_names_in_ attribute (batch).")
+        print(f"[DEBUG] Scaler expected number of features (batch): {feature_scaler.n_features_in_ if hasattr(feature_scaler, 'n_features_in_') else 'N/A'}")
+
+    # Separate features for scaling
+    df_to_scale = combined_df_features[ENGINEERED_FEATURES_FOR_SCALING]
+    df_raw_unscaled = combined_df_features[RAW_FEATURES_NOT_SCALED_BY_THIS_SCALER]
     
-    # Vectorized scaling
-    scaled_features = feature_scaler.transform(combined_df)
+    print(f"[DEBUG] Batch df_to_scale columns: {list(df_to_scale.columns)}")
+    print(f"[DEBUG] Batch df_raw_unscaled columns: {list(df_raw_unscaled.columns)}")
+
+    # Vectorized scaling on the appropriate part of the DataFrame
+    scaled_engineered_features_np = feature_scaler.transform(df_to_scale)
+    
+    # Convert scaled numpy array back to DataFrame, preserving index for proper concatenation
+    scaled_engineered_features_df = pd.DataFrame(scaled_engineered_features_np, columns=ENGINEERED_FEATURES_FOR_SCALING, index=combined_df_features.index)
+
+    # Concatenate scaled engineered features with unscaled raw features
+    final_processed_df = pd.concat([scaled_engineered_features_df, df_raw_unscaled], axis=1)
+    
+    # Ensure the columns are in the final specified order
+    final_processed_df = final_processed_df[FINAL_FEATURE_COLS]
+    print("[DEBUG] Final batch processed DataFrame columns after selective scaling:", list(final_processed_df.columns))
     
     # Reshape back to (num_sequences, SEQUENCE_LENGTH, num_features)
     num_sequences = len(sequences_data)
-    return scaled_features.reshape(num_sequences, SEQUENCE_LENGTH, -1)
+    num_features = len(FINAL_FEATURE_COLS)
+    return final_processed_df.values.reshape(num_sequences, SEQUENCE_LENGTH, num_features)
 
 @app.get("/health")
 def health_check():
@@ -256,7 +291,7 @@ async def predict_rul_bulk(request_data: BulkPredictionRequest):
             scaled_predictions = model.predict(model_input, verbose=0) # Shape: (batch_size, 1)
             
             # Vectorized inverse transform
-            predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+            predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten();
             
             # Create response objects
             valid_predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]
@@ -311,7 +346,7 @@ async def predict_rul_bulk_fast(request_data: BulkPredictionRequest):
         scaled_predictions = model.predict(model_input, verbose=0)  # Shape: (batch_size, 1)
         
         # Vectorized inverse transform
-        predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+        predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten();
         
         # Create response objects
         predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]

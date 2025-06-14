@@ -12,11 +12,11 @@ const RulSparkline: React.FC<RulSparklineProps> = ({ assetId }) => {
   const { data: rulHistory, isLoading, error } = useRulHistory(String(assetId));
 
   if (isLoading) {
-    return <div className="text-xs text-gray-400">Loading...</div>;
+    return <div className="text-xs text-[#8A8A8A]">Loading...</div>;
   }
 
   if (error || !rulHistory || rulHistory.length === 0) {
-    return <div className="text-xs text-red-400">{error ? 'Error' : 'No data'}</div>;
+    return <div className="text-xs text-[#E0D9FF]">{error ? 'Error' : 'No data'}</div>;
   }
 
   // Sort data by timestamp ascending for the line chart
@@ -43,7 +43,7 @@ const RulSparkline: React.FC<RulSparklineProps> = ({ assetId }) => {
         <Line
           type="monotone"
           dataKey="rul"
-          stroke="#8884d8"
+          stroke="#D4FF6D"
           strokeWidth={2}
           dot={false}
         />

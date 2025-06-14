@@ -52,22 +52,20 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
   // Custom tooltip with enhanced information
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) return null;
-    
     const data = payload[0].payload;
     const value = payload[0].value;
-    
     return (
-      <div className="bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-3">
-        <p className="font-semibold text-gray-800">{`Sequence ${label}`}</p>
-        <p className="text-blue-600">
+      <div className="bg-white border border-[#F7F7F7] rounded-lg shadow-lg p-3">
+        <p className="font-semibold text-[#333333]">{`Sequence ${label}`}</p>
+        <p className="text-[#1E1E2D]">
           <span className="font-medium">RUL:</span> {value.toFixed(1)} cycles
         </p>
         {data.trend !== 0 && (
-          <p className={`text-sm ${data.trend > 0 ? 'text-green-600' : 'text-red-600'}`}>
+          <p className={`text-sm ${data.trend > 0 ? 'text-[#D4FF6D]' : 'text-[#E0D9FF]'}`}> 
             <span className="font-medium">Trend:</span> {data.trend > 0 ? '+' : ''}{data.trend.toFixed(1)} cycles
           </p>
         )}
-        <p className="text-xs text-gray-500">
+        <p className="text-xs text-[#8A8A8A]">
           {new Date(data.timestamp).toLocaleTimeString()}
         </p>
       </div>
@@ -76,15 +74,15 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
 
   if (data.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full min-h-[200px] text-gray-500">
+      <div className="flex items-center justify-center h-full min-h-[200px] text-[#8A8A8A]">
         <div className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 opacity-20">
+          <div className="w-16 h-16 mx-auto mb-4 opacity-20 text-[#E0D9FF]">
             <svg fill="currentColor" viewBox="0 0 20 20">
               <path fillRule="evenodd" d="M3 3a1 1 0 000 2v8a2 2 0 002 2h2.586l-1.293 1.293a1 1 0 101.414 1.414L10 15.414l2.293 2.293a1 1 0 001.414-1.414L12.414 15H15a2 2 0 002-2V5a1 1 0 100-2H3zm11.707 4.707a1 1 0 00-1.414-1.414L10 9.586 8.707 8.293a1 1 0 00-1.414 0l-2 2a1 1 0 101.414 1.414L8 10.414l1.293 1.293a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
             </svg>
           </div>
-          <p className="text-lg font-medium">No predictions yet</p>
-          <p className="text-sm">Start processing to see real-time RUL predictions</p>
+          <p className="text-lg font-medium text-[#333333]">No predictions yet</p>
+          <p className="text-sm text-[#8A8A8A]">Start processing to see real-time RUL predictions</p>
         </div>
       </div>
     );
@@ -94,129 +92,104 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
     <div className="w-full h-full">
       {/* Statistics Header */}
       <div className="grid grid-cols-4 gap-4 mb-6 text-center">
-        <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-3">
-          <p className="text-xs font-medium text-blue-800 uppercase tracking-wider">Latest</p>
-          <p className="text-lg font-bold text-blue-900">{stats.latest.toFixed(0)}</p>
-          <p className="text-xs text-blue-600">cycles</p>
+        <div className="bg-[#D4EFFF] rounded-lg p-3">
+          <p className="text-xs font-medium text-[#1E1E2D] uppercase tracking-wider">Latest</p>
+          <p className="text-lg font-bold text-[#1E1E2D]">{stats.latest.toFixed(0)}</p>
+          <p className="text-xs text-[#8A8A8A]">cycles</p>
         </div>
-        <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-3">
-          <p className="text-xs font-medium text-green-800 uppercase tracking-wider">Average</p>
-          <p className="text-lg font-bold text-green-900">{stats.avg.toFixed(0)}</p>
-          <p className="text-xs text-green-600">cycles</p>
+        <div className="bg-[#D4FF6D] rounded-lg p-3">
+          <p className="text-xs font-medium text-[#1E1E2D] uppercase tracking-wider">Average</p>
+          <p className="text-lg font-bold text-[#1E1E2D]">{stats.avg.toFixed(0)}</p>
+          <p className="text-xs text-[#8A8A8A]">cycles</p>
         </div>
-        <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-3">
-          <p className="text-xs font-medium text-purple-800 uppercase tracking-wider">Maximum</p>
-          <p className="text-lg font-bold text-purple-900">{stats.max.toFixed(0)}</p>
-          <p className="text-xs text-purple-600">cycles</p>
+        <div className="bg-[#E0D9FF] rounded-lg p-3">
+          <p className="text-xs font-medium text-[#1E1E2D] uppercase tracking-wider">Maximum</p>
+          <p className="text-lg font-bold text-[#1E1E2D]">{stats.max.toFixed(0)}</p>
+          <p className="text-xs text-[#8A8A8A]">cycles</p>
         </div>
-        <div className="bg-gradient-to-r from-red-50 to-red-100 rounded-lg p-3">
-          <p className="text-xs font-medium text-red-800 uppercase tracking-wider">Minimum</p>
-          <p className="text-lg font-bold text-red-900">{stats.min.toFixed(0)}</p>
-          <p className="text-xs text-red-600">cycles</p>
+        <div className="bg-[#FFF5CC] rounded-lg p-3">
+          <p className="text-xs font-medium text-[#1E1E2D] uppercase tracking-wider">Minimum</p>
+          <p className="text-lg font-bold text-[#1E1E2D]">{stats.min.toFixed(0)}</p>
+          <p className="text-xs text-[#8A8A8A]">cycles</p>
         </div>
       </div>
 
       {/* Enhanced Chart */}
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
-          <defs>
-            <linearGradient id="rulGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.4} />
-              <stop offset="50%" stopColor="#8b5cf6" stopOpacity={0.3} />
-              <stop offset="100%" stopColor="#06b6d4" stopOpacity={0.1} />
-            </linearGradient>
-            <linearGradient id="avgGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#10b981" stopOpacity={0.6} />
-              <stop offset="100%" stopColor="#10b981" stopOpacity={0.1} />
-            </linearGradient>
-            <filter id="glow">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-              <feMerge> 
-                <feMergeNode in="coloredBlur"/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
-          </defs>
-          
-          <CartesianGrid strokeDasharray="2 2" stroke="#e5e7eb" strokeOpacity={0.4} />
-          
+          <CartesianGrid strokeDasharray="2 2" stroke="#F7F7F7" strokeOpacity={1} />
           <XAxis 
             dataKey="index"
-            stroke="#6b7280"
+            stroke="#8A8A8A"
             fontSize={11}
-            tick={{ fill: '#6b7280' }}
-            axisLine={{ stroke: '#9ca3af', strokeWidth: 1 }}
-            tickLine={{ stroke: '#9ca3af' }}
+            tick={{ fill: '#8A8A8A' }}
+            axisLine={{ stroke: '#F7F7F7', strokeWidth: 1 }}
+            tickLine={{ stroke: '#F7F7F7' }}
           />
-          
           <YAxis 
-            stroke="#6b7280"
+            stroke="#8A8A8A"
             fontSize={11}
-            tick={{ fill: '#6b7280' }}
-            axisLine={{ stroke: '#9ca3af', strokeWidth: 1 }}
-            tickLine={{ stroke: '#9ca3af' }}
+            tick={{ fill: '#8A8A8A' }}
+            axisLine={{ stroke: '#F7F7F7', strokeWidth: 1 }}
+            tickLine={{ stroke: '#F7F7F7' }}
             domain={['dataMin - 1000', 'dataMax + 1000']}
           />
-           {/* Critical thresholds */}
+          {/* Critical thresholds */}
           <ReferenceLine 
             y={20000} 
-            stroke="#ef4444" 
+            stroke="#E0D9FF" 
             strokeDasharray="5 5"
             strokeWidth={2}
-            label={{ value: "Critical (20k)", position: "top" }}
+            label={{ value: "Critical (20k)", position: "top", style: { fill: '#E0D9FF', fontWeight: 'bold' } }}
           />
           <ReferenceLine 
             y={60000} 
-            stroke="#f59e0b" 
+            stroke="#FFF5CC" 
             strokeDasharray="5 5" 
             strokeWidth={2}
-            label={{ value: "Warning (60k)", position: "top" }}
+            label={{ value: "Warning (60k)", position: "top", style: { fill: '#FFF5CC', fontWeight: 'bold' } }}
           />
-          
           <Tooltip content={<CustomTooltip />} />
           <Legend />
-          
           {/* Area under the curve for visual appeal */}
           <Area
             type="monotone"
             dataKey="predictedRul"
             stroke="none"
-            fill="url(#rulGradient)"
+            fill="#D4EFFF"
             fillOpacity={0.4}
           />
-          
           {/* Main RUL line */}
           <Line 
             type="monotone" 
             dataKey="predictedRul" 
-            stroke="#3b82f6" 
+            stroke="#D4FF6D" 
             strokeWidth={3}
             dot={{ 
-              fill: '#3b82f6', 
+              fill: '#D4FF6D', 
               strokeWidth: 2, 
-              stroke: '#ffffff',
+              stroke: '#FFFFFF',
               r: 4 
             }}
             activeDot={{ 
               r: 8, 
-              stroke: '#3b82f6',
+              stroke: '#D4FF6D',
               strokeWidth: 2,
-              fill: '#ffffff'
+              fill: '#FFFFFF'
             }}
             name="Predicted RUL"
           />
-          
           {/* Processing indicator */}
           {isProcessing && data.length > 0 && (
             <ReferenceLine 
               x={data.length} 
-              stroke="#10b981" 
+              stroke="#D4FF6D" 
               strokeWidth={3}
               strokeDasharray="10 5"
               label={{ 
                 value: "Processing...", 
-                position: "topRight",
-                style: { fill: '#10b981', fontWeight: 'bold' }
+                position: "top",
+                style: { fill: '#D4FF6D', fontWeight: 'bold' }
               }}
             />
           )}

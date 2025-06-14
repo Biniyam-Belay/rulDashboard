@@ -22,7 +22,7 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
 
   return (
     <div className="bg-white rounded-lg shadow-md p-6">
-      <h3 className="text-lg font-semibold text-gray-800 mb-4">Processing Status</h3>
+      <h3 className="text-lg font-semibold text-[#333333] mb-4">Processing Status</h3>
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Progress Circle */}
@@ -32,15 +32,15 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
               value={progressPercentage}
               text={`${Math.round(progressPercentage)}%`}
               styles={buildStyles({
-                textColor: '#374151',
-                pathColor: isProcessing ? '#2563eb' : '#10b981',
-                trailColor: '#e5e7eb',
+                textColor: '#333333',
+                pathColor: isProcessing ? '#D4FF6D' : '#E0D9FF',
+                trailColor: '#F7F7F7',
               })}
             />
           </div>
           <div className="text-center">
-            <p className="text-sm text-gray-600">Overall Progress</p>
-            <p className="text-lg font-semibold text-gray-800">
+            <p className="text-sm text-[#8A8A8A]">Overall Progress</p>
+            <p className="text-lg font-semibold text-[#333333]">
               {currentSequence} / {totalSequences} sequences
             </p>
           </div>
@@ -48,24 +48,24 @@ const ProcessingStatus: React.FC<ProcessingStatusProps> = ({
 
         {/* Statistics */}
         <div className="space-y-4">
-          <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-            <span className="text-sm font-medium text-green-700">Successful</span>
-            <span className="text-lg font-semibold text-green-700">{completedSequences}</span>
+          <div className="flex justify-between items-center p-3 bg-[#D4FF6D] rounded-lg">
+            <span className="text-sm font-medium text-[#1E1E2D]">Successful</span>
+            <span className="text-lg font-semibold text-[#1E1E2D]">{completedSequences}</span>
           </div>
           
-          <div className="flex justify-between items-center p-3 bg-red-50 rounded-lg">
-            <span className="text-sm font-medium text-red-700">Errors</span>
-            <span className="text-lg font-semibold text-red-700">{errorSequences}</span>
+          <div className="flex justify-between items-center p-3 bg-[#E0D9FF] rounded-lg">
+            <span className="text-sm font-medium text-[#1E1E2D]">Errors</span>
+            <span className="text-lg font-semibold text-[#1E1E2D]">{errorSequences}</span>
           </div>
           
-          <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-            <span className="text-sm font-medium text-blue-700">Success Rate</span>
-            <span className="text-lg font-semibold text-blue-700">{successRate.toFixed(1)}%</span>
+          <div className="flex justify-between items-center p-3 bg-[#D4EFFF] rounded-lg">
+            <span className="text-sm font-medium text-[#1E1E2D]">Success Rate</span>
+            <span className="text-lg font-semibold text-[#1E1E2D]">{successRate.toFixed(1)}%</span>
           </div>
           
-          <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-            <span className="text-sm font-medium text-gray-700">Status</span>
-            <span className={`text-sm font-semibold ${isProcessing ? 'text-blue-600' : 'text-green-600'}`}>
+          <div className="flex justify-between items-center p-3 bg-[#F7F7F7] rounded-lg">
+            <span className="text-sm font-medium text-[#8A8A8A]">Status</span>
+            <span className={`text-sm font-semibold ${isProcessing ? 'text-[#D4FF6D]' : 'text-[#333333]'}`}>
               {isProcessing ? 'Processing...' : 'Complete'}
             </span>
           </div>
