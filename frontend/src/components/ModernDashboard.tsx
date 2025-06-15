@@ -1,114 +1,182 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
-import Papa from 'papaparse';
+"use client"
+
+import type React from "react"
+import { useState } from "react"
+import { useNavigate } from "react-router-dom"
 import {
-  Activity,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  Gauge,
-  LineChart,
-  PlayCircle,
-  StopCircle,
-  TrendingUp,
-  Upload,
-  Zap,
-  Database,
-  BarChart3,
-  Shield,
-  Users,
-  Target,
-  ArrowUp,
-  AlertCircle as LucideAlertCircle,
-  Check
-} from 'lucide-react';
+  BarChart3, Bell, Settings, Search, Upload, Database, Shield, MoreHorizontal,
+  Activity, AlertTriangle, CheckCircle, PlayCircle, StopCircle, Clock, TrendingUp,
+  ChevronDown, ChevronUp // Added ChevronDown and ChevronUp
+} from 'lucide-react'
 
-import { useAssetsWithLatestRul, predictRulForAssetBulk, predictRulForAssetBulkFast } from '@/lib/api';
-
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-
-import RealTimeProgressChart from '@/components/RealTimeProgressChart';
-import ProcessingStatus from '@/components/ProcessingStatus';
-import RulDistributionChart from '@/components/RulDistributionChart';
-import AlertsPanel from '@/components/AlertsPanel';
-import RulSparkline from '@/components/RulSparkline';
+// import { useAssetsWithLatestRul, predictRulForAssetBulk, predictRulForAssetBulkFast } from '@/lib/api'; // Removed this duplicate
+import Papa from 'papaparse'; // Added PapaParse for CSV
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  // CardFooter, // Removed unused import
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+// import { Progress } from "@/components/ui/progress"; // Removed unused import
+import { Button } from "@/components/ui/button";
+import RealTimeProgressChart from "./RealTimeProgressChart"; // Corrected import to default
+import { useAssetsWithLatestRul, predictRulForAssetBulkFast, predictRulForAssetBulk } from "@/lib/api"; // Consolidated API imports
+import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { Badge } from "@/components/ui/badge"; // Added Badge import
+import { Input } from "@/components/ui/input"; // Added Input import
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"; // Added Avatar imports
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Added Select imports
 
 const DashboardPage = () => {
-  // Palette inspired by the provided image:
-  // pageBg: #F7F8FC
-  // cardBg: #FFFFFF
-  // primaryAccent: #FF6F00 (Strong Orange)
-  // primaryAccentLight: #FFE0B2 (Lighter Orange)
-  // primaryText: #263238 (Dark Blue-Gray)
-  // secondaryText: #546E7A (Medium Blue-Gray)
-  // borderColor: #E0E0E0 (Light Gray)
-  // errorAccent: #D32F2F (Red)
-  // errorAccentLight: #FFCDD2 (Lighter Red)
-  // warningAccent: #FFA000 (Amber)
-  // warningAccentLight: #FFECB3 (Lighter Amber)
-  // successAccent: #43A047 (Green)
-  // successAccentLight: #C8E6C9 (Lighter Green)
-  // white: #FFFFFF
+  // Fetch real asset data
+  const { data: assets, isLoading: assetsLoading, error: assetsError } = useAssetsWithLatestRul();
 
-  const { data, isLoading, error } = useAssetsWithLatestRul();
   const navigate = useNavigate();
-  // const [sortConfig, setSortConfig] = useState<SortConfig>({ key: 'latest_rul', direction: 'ascending' });
 
-  // File upload and processing states
+  // Calculate KPIs based on fetched data
+  const totalAssets = assets?.length ?? 0;
+  const criticalAssets = assets?.filter(a => (a.latest_rul ?? Infinity) <= 20000).length ?? 0;
+  const warningAssets = assets?.filter(a => (a.latest_rul ?? Infinity) > 20000 && (a.latest_rul ?? 0) <= 60000).length ?? 0;
+  const healthyAssets = assets?.filter(a => (a.latest_rul ?? 0) > 60000).length ?? 0;
+  const avgRul = assets && totalAssets > 0 ? Math.round(assets.reduce((sum, a) => sum + (a.latest_rul ?? 0), 0) / totalAssets) : 0;
+
+  const fleetRulChartData = assets
+    ?.slice(0, 5) // Take the first 5 assets for the chart
+    .map(asset => ({
+      name: `Asset ${String(asset.id).substring(0, 6)}...`, // Ensure asset.id is a string
+      RUL: asset.latest_rul ?? 0, // Use latest_rul, defaulting to 0 if null
+    })) || [];
+
+  // CSV Processing States
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<any[] | null>(null);
   const [headerRow, setHeaderRow] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [assetIdForSim, setAssetIdForSim] = useState<string>('');
-  const [simulationProgress, setSimulationProgress] = useState<string>('');
+  const [assetIdForSim, setAssetIdForSim] = useState<string>(''); // For CSV processing context
+  const [simulationProgressText, setSimulationProgressText] = useState<string>(''); // For text updates
   const [simulationResults, setSimulationResults] = useState<Array<{
     sequenceNumber: number;
     predictedRul: number;
     timestamp: string;
     error?: string;
   }>>([]);
-  const [currentSequence, setCurrentSequence] = useState(0);
+  const [currentSequence, setCurrentSequence] = useState(0); // Will be used in simulation
   const [totalSequences, setTotalSequences] = useState(0);
-  const [simulationAbortController, setSimulationAbortController] = useState<AbortController | null>(null);
-  const [batchSize, setBatchSize] = useState(30);
-  const [processingMode, setProcessingMode] = useState<'fast' | 'standard'>('fast');
-  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
-  const [sequencesPerSecond, setSequencesPerSecond] = useState<number>(0);
-  const [advancedMode, setAdvancedMode] = useState(false);
+  const [simulationAbortController, setSimulationAbortController] = useState<AbortController | null>(null); // Will be used
+  const [batchSize, setBatchSize] = useState(30); // Restored setBatchSize
+  const [processingMode, setProcessingMode] = useState<'fast' | 'standard'>('fast'); // Restored setProcessingMode
+  const [processingStartTime, setProcessingStartTime] = useState<number | null>(null); // Will be used
+  const [droppedRowCount, setDroppedRowCount] = useState<number>(0);
+  const [skippedSequenceCount, setSkippedSequenceCount] = useState<number>(0);
+  const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [showValidationDetails, setShowValidationDetails] = useState<boolean>(false); // New state for collapsibility
 
   const SEQUENCE_LENGTH = 50;
 
-  // Header mapping for CSV processing
-  const headerMapping: { [key: string]: string } = {
+  // Type definition for the result of transformRow
+  type TransformRowResult = 
+    | { success: true; data: { [key: string]: number } } 
+    | { success: false; error: string };
+
+  const headerMapping: { [key: string]: string } = { 
     'x_direction': 'x_direction',
     'y_direction': 'y_direction',
     'bearing_temperature': 'bearing_temperature',
-    'env_temperature': 'env_temperature'
+    'env_temperature': 'env_temperature',
+    'x': 'x_direction', // alias
+    'y': 'y_direction', // alias
+    'bearing_temp': 'bearing_temperature', // alias
+    'env_temp': 'env_temperature', // alias
+    'x direction': 'x_direction', // with space
+    'y direction': 'y_direction', // with space
+    'bearing temp': 'bearing_temperature', // with space
+    'env temp': 'env_temperature', // with space
   };
 
-  // KPI calculations
-  const totalAssets = data?.length ?? 0;
-  const criticalAssets = data?.filter(a => (a.latest_rul ?? Infinity) <= 20000).length ?? 0;
-  const warningAssets = data?.filter(a => (a.latest_rul ?? Infinity) > 20000 && (a.latest_rul ?? 0) <= 60000).length ?? 0;
-  const healthyAssets = data?.filter(a => (a.latest_rul ?? 0) > 60000).length ?? 0;
+  // Required keys for the backend model - kept for transformRow
+  const requiredBackendKeys = ['x_direction', 'y_direction', 'bearing_temperature', 'env_temperature'];
 
-  // Processing statistics
-  const completedSequences = simulationResults.filter(r => r.predictedRul !== undefined).length;
-  const errorSequences = simulationResults.filter(r => r.error !== undefined).length;
-  const successfulPredictions = simulationResults.filter(r => r.predictedRul !== undefined && !r.error);
+  const transformRow = (
+    row: any, 
+    csvHeaders: string[], 
+    originalCsvRowNumber: number // Added for detailed error messages
+  ): TransformRowResult => {
+    const transformed: any = {};
+    const lowerCsvHeaders = csvHeaders.map(h => h.toLowerCase().trim());
 
-  // File handling functions
+    for (const backendKey of requiredBackendKeys) {
+      let mappedCsvHeader: string | null = null;
+      let headerIndex = -1;
+
+      // 1. Try to find the CSV header using headerMapping
+      for (const csvAlias in headerMapping) {
+        if (headerMapping[csvAlias] === backendKey) {
+          const tempIndex = lowerCsvHeaders.indexOf(csvAlias.toLowerCase());
+          if (tempIndex !== -1) {
+            headerIndex = tempIndex;
+            mappedCsvHeader = csvHeaders[headerIndex];
+            break;
+          }
+        }
+      }
+
+      // 2. If not found via mapping, try direct match for backendKey
+      if (headerIndex === -1) {
+        const directMatchIndex = lowerCsvHeaders.indexOf(backendKey.toLowerCase());
+        if (directMatchIndex !== -1) {
+          headerIndex = directMatchIndex;
+          mappedCsvHeader = csvHeaders[headerIndex];
+        }
+      }
+
+      // 3. If header is still not found for this backendKey
+      if (headerIndex === -1 || !mappedCsvHeader) {
+        const expectedMappings = Object.keys(headerMapping)
+          .filter(k => headerMapping[k] === backendKey)
+          .map(k => `'${k}'`)
+          .join(' or ');
+        const expectation = expectedMappings ? `${expectedMappings} or '${backendKey}'` : `'${backendKey}'`;
+        return { 
+          success: false, 
+          error: `Row ${originalCsvRowNumber}: Required column for sensor reading '${backendKey}' (expected as ${expectation}) not found in CSV. Available CSV headers: [${csvHeaders.join(', ')}]` 
+        };
+      }
+
+      // 4. Header found (mappedCsvHeader), now validate its value
+      const valStr = row[mappedCsvHeader];
+
+      if (valStr === undefined || valStr === null) {
+        return { 
+          success: false, 
+          error: `Row ${originalCsvRowNumber}: Value for column '${mappedCsvHeader}' (for sensor '${backendKey}') is missing.` 
+        };
+      }
+
+      const sValTrimmed = String(valStr).trim();
+      if (sValTrimmed === '') {
+        return { 
+          success: false, 
+          error: `Row ${originalCsvRowNumber}: Value for column '${mappedCsvHeader}' (for sensor '${backendKey}') is empty.` 
+        };
+      }
+
+      const valNum = parseFloat(sValTrimmed);
+      if (isNaN(valNum)) {
+        return { 
+          success: false, 
+          error: `Row ${originalCsvRowNumber}: Value '${sValTrimmed}' in column '${mappedCsvHeader}' (for sensor '${backendKey}') is not a valid number.` 
+        };
+      }
+      
+      transformed[backendKey] = valNum;
+    }
+    return { success: true, data: transformed };
+  };
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
       setSelectedFile(event.target.files[0]);
@@ -118,6 +186,180 @@ const DashboardPage = () => {
       setSimulationResults([]);
       setCurrentSequence(0);
       setTotalSequences(0);
+      setSimulationProgressText('');
+    }
+  };
+
+  // Renamed from handleStartProcessing to avoid conflict with the old mock function
+  const handleStartSimulation = async () => { 
+    if (!parsedData || parsedData.length === 0) { // Check for empty parsedData too
+      setUploadError('No data to process. Please upload and parse a CSV file.');
+      return;
+    }
+    // Basic Asset ID check, can be made more robust
+    if (!assetIdForSim.trim()) {
+      setUploadError('Please enter an Asset ID for the simulation.');
+      return;
+    }
+
+    const abortController = new AbortController();
+    setSimulationAbortController(abortController);
+
+    setIsProcessing(true);
+    // setUploadError(null); // Clear general errors when starting simulation, specific validation UI will handle data issues
+    setSimulationResults([]);
+    setCurrentSequence(0);
+    setProcessingStartTime(Date.now());
+    setDroppedRowCount(0); 
+    setSkippedSequenceCount(0); 
+    setValidationWarnings([]); 
+
+    setSimulationProgressText('Validating CSV data...');
+
+    const validTransformedDataForSequences: Array<{ [key: string]: number }> = [];
+    const currentValidationWarnings: string[] = [];
+    let currentDroppedRowCount = 0;
+
+    for (let i = 0; i < parsedData.length; i++) {
+      const currentRow = parsedData[i];
+      const csvRowNumber = i + 2; // 1-based for file, +1 for header
+      const transformOutcome = transformRow(currentRow, headerRow, csvRowNumber);
+
+      if (transformOutcome.success) {
+        validTransformedDataForSequences.push(transformOutcome.data);
+      } else {
+        currentDroppedRowCount++;
+        if (transformOutcome.error) {
+          currentValidationWarnings.push(transformOutcome.error);
+        } else {
+          currentValidationWarnings.push(`Row ${csvRowNumber}: Dropped for an unspecified reason.`);
+        }
+      }
+    }
+
+    setDroppedRowCount(currentDroppedRowCount);
+    setValidationWarnings(currentValidationWarnings);
+
+    const actualSequences: Array<Array<{ [key: string]: number }>> = [];
+    for (let i = 0; (i + SEQUENCE_LENGTH) <= validTransformedDataForSequences.length; i += SEQUENCE_LENGTH) {
+      actualSequences.push(validTransformedDataForSequences.slice(i, i + SEQUENCE_LENGTH));
+    }
+    
+    const numPotentialSequencesFromRaw = Math.floor(parsedData.length / SEQUENCE_LENGTH);
+    const numActualFormedSequences = actualSequences.length;
+    
+    setTotalSequences(numActualFormedSequences);
+    // Make sure to use the state setter for skippedSequenceCount
+    const currentSkippedSequenceCount = numPotentialSequencesFromRaw - numActualFormedSequences;
+    setSkippedSequenceCount(currentSkippedSequenceCount);
+
+
+    if (numActualFormedSequences === 0) {
+      // Detailed validation UI will show droppedRowCount, skippedSequenceCount, validationWarnings.
+      // No need for a redundant uploadError if these states are populated.
+      setUploadError(null); 
+      setIsProcessing(false);
+      setSimulationProgressText('Simulation stopped: Not enough valid data to form sequences.');
+      return;
+    }
+    
+    setUploadError(null); // Clear any previous error if data is valid for processing.
+    setSimulationProgressText(
+      `Data validation complete. Dropped ${currentDroppedRowCount} row(s). ${numActualFormedSequences} sequences formed. ${currentSkippedSequenceCount} potential sequence(s) skipped. Starting processing...`
+    );
+
+    const BATCH_SIZE = batchSize; 
+    const batches = [];
+    for (let i = 0; i < numActualFormedSequences; i += BATCH_SIZE) {
+      const batchEnd = Math.min(i + BATCH_SIZE, numActualFormedSequences);
+      batches.push({ start: i, end: batchEnd });
+    }
+
+    try {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        if (abortController.signal.aborted) {
+          throw new Error('Simulation stopped by user');
+        }
+
+        const batch = batches[batchIndex];
+        setSimulationProgressText(`Processing batch ${batchIndex + 1} of ${batches.length} (sequences ${batch.start + 1}-${batch.end} of ${numActualFormedSequences})...`);
+        
+        const sequencesForThisBatch = actualSequences.slice(batch.start, batch.end);
+        
+        const metadataForThisBatch: Array<{ sequenceNumber: number }> = [];
+        for (let k = 0; k < sequencesForThisBatch.length; k++) {
+            const overallSequenceIndex = batch.start + k;
+            metadataForThisBatch.push({ sequenceNumber: overallSequenceIndex + 1 });
+        }
+
+        if (sequencesForThisBatch.length > 0) {
+          try {
+            const bulkResponse = processingMode === 'fast'
+              ? await predictRulForAssetBulkFast(assetIdForSim, sequencesForThisBatch)
+              : await predictRulForAssetBulk(assetIdForSim, sequencesForThisBatch);
+
+            const { predictions } = bulkResponse.data; 
+
+            const newResults = predictions.map((prediction: any, indexInBatch: number) => {
+              const metadata = metadataForThisBatch[indexInBatch];
+              return {
+                sequenceNumber: metadata.sequenceNumber, 
+                predictedRul: prediction.predicted_rul > 0 ? Math.round(prediction.predicted_rul) : 0,
+                timestamp: new Date().toISOString(),
+                error: prediction.error 
+              };
+            });
+
+            setSimulationResults(prev => [...prev, ...newResults]);
+            setCurrentSequence(prevCurrent => prevCurrent + sequencesForThisBatch.length);
+
+            if (processingStartTime) {
+              const elapsedSeconds = (Date.now() - processingStartTime) / 1000;
+              // Use the updated currentSequence value for rate calculation
+              const currentTotalProcessedSequences = currentSequence + sequencesForThisBatch.length; 
+              if (elapsedSeconds > 0) {
+                const rate = currentTotalProcessedSequences / elapsedSeconds;
+                console.log(`Current processing rate: ${Math.round(rate * 10) / 10} sequences/sec`);
+              }
+            }
+
+          } catch (error: any) {
+            console.error('Bulk processing API error:', error);
+            const errorMsg = error.response?.data?.detail || error.message || 'Unknown API error';
+            const errorResults = metadataForThisBatch.map(metadata => ({
+              sequenceNumber: metadata.sequenceNumber,
+              predictedRul: 0,
+              timestamp: new Date().toISOString(),
+              error: `API Error for sequence ${metadata.sequenceNumber}: ${errorMsg}`
+            }));
+            setSimulationResults(prev => [...prev, ...errorResults]);
+            setUploadError(`Bulk processing failed for batch ${batchIndex + 1}: ${errorMsg}`);
+          }
+        }
+      }
+
+      setSimulationProgressText(`Simulation finished. Processed ${currentSequence} of ${numActualFormedSequences} sequences.`);
+    } catch (err: any) {
+      if (err.message === 'Simulation stopped by user') {
+        setSimulationProgressText('Simulation stopped by user.');
+        setUploadError(null); // Clear error as it's a user action
+      } else {
+        setUploadError(`Simulation failed: ${err.message}`);
+        setSimulationProgressText('Simulation failed.');
+      }
+    } finally {
+      setIsProcessing(false);
+      setSimulationAbortController(null);
+      // Reset processing start time for next run if needed, or keep for overall stats
+      // setProcessingStartTime(null);\ 
+    }
+  };
+
+  const stopSimulation = () => {
+    if (simulationAbortController) {
+      simulationAbortController.abort();
+      // setIsProcessing(false); // Already handled in finally block of handleStartSimulation
+      // setSimulationProgressText('Simulation stopping...'); // User sees this from abort signal
     }
   };
 
@@ -130,900 +372,510 @@ const DashboardPage = () => {
     setUploadError(null);
     setParsedData(null);
     setHeaderRow([]);
+    setSimulationProgressText('Parsing CSV...');
 
     Papa.parse(selectedFile, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: (results: Papa.ParseResult<any>) => { // Added type for results
         if (results.errors.length) {
-          setUploadError(`Error parsing CSV: ${results.errors[0].message}`);
+          setUploadError(`Error parsing CSV: ${results.errors.map((e: Papa.ParseError) => e.message).join(', ')}`); // Added type for e
           setParsedData(null);
+          setSimulationProgressText('CSV parsing failed.');
         } else {
-          // Filter out empty column headers
-          const validFields = (results.meta.fields || []).filter(field => field.trim() !== '');
+          const validFields = (results.meta.fields || []).filter(field => field && field.trim() !== ''); // Kept as is, field type inferred
           setHeaderRow(validFields);
-          // Filter out empty column data
+          
           const cleanData = results.data.map((row: any) => {
             const cleanRow: any = {};
             for (const key in row) {
-              if (key.trim() !== '') {
-                cleanRow[key] = row[key];
+              if (key && key.trim() !== '') {
+                cleanRow[key.trim()] = row[key];
               }
             }
             return cleanRow;
           });
-          setParsedData(cleanData);
-          const numSequences = Math.floor((results.data?.length || 0) / SEQUENCE_LENGTH);
+          setParsedData(cleanData as any[]);
+          const numSequences = Math.floor((cleanData?.length || 0) / SEQUENCE_LENGTH);
           setTotalSequences(numSequences);
+          setSimulationProgressText(`CSV parsed. ${cleanData.length} rows, ${numSequences} sequences found.`);
         }
         setIsParsing(false);
       },
-      error: (err) => {
+      error: (err: any) => {
         setUploadError(`Failed to parse CSV: ${err.message}`);
         setIsParsing(false);
         setParsedData(null);
+        setSimulationProgressText('CSV parsing failed.');
       }
     });
   };
 
-  const transformRow = (row: any, csvHeaders: string[]): any | null => {
-    // Filter out any empty headers
-    const validHeaders = csvHeaders.filter(h => h.trim() !== '');
-    const transformed: any = {};
-    const requiredBackendKeys = ['x_direction', 'y_direction', 'bearing_temperature', 'env_temperature'];
+  if (assetsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-[#F8F9FB]">
+        <Activity className="h-16 w-16 animate-spin text-blue-500" />
+        <span className="ml-4 text-xl text-gray-700">Loading dashboard data...</span>
+      </div>
+    );
+  }
 
-    for (const backendKey of requiredBackendKeys) {
-      // Direct match with valid headers
-      if (validHeaders.includes(backendKey)) {
-        const val = parseFloat(row[backendKey]);
-        if (!isNaN(val)) {
-          transformed[backendKey] = val;
-          continue;
-        }
-      }
-      // Try to find a matching header ignoring case and underscores
-      const foundHeader = validHeaders.find(h => h.replace(/_/g, '').toLowerCase() === backendKey.replace(/_/g, '').toLowerCase());
-      if (foundHeader) {
-        const val = parseFloat(row[foundHeader]);
-        if (!isNaN(val)) {
-          transformed[backendKey] = val;
-          continue;
-        }
-      }
-      // If not found, return null (invalid row)
-      return null;
-    }
-    return transformed;
-  };
-
-  const handleStartSimulation = async () => {
-    if (!parsedData || parsedData.length < SEQUENCE_LENGTH) {
-      setUploadError(`Not enough data to form a sequence. Need at least ${SEQUENCE_LENGTH} rows.`);
-      return;
-    }
-    if (!assetIdForSim.trim()) {
-      setUploadError('Please enter an Asset ID for the simulation.');
-      return;
-    }
-
-    const abortController = new AbortController();
-    setSimulationAbortController(abortController);
-
-    setIsProcessing(true);
-    setUploadError(null);
-    setSimulationProgress('Starting simulation...');
-    setSimulationResults([]);
-    setCurrentSequence(0);
-    setProcessingStartTime(Date.now());
-
-    const numSequences = Math.floor(parsedData.length / SEQUENCE_LENGTH);
-    setTotalSequences(numSequences);
-
-    const BATCH_SIZE = batchSize;
-    const batches = [];
-
-    for (let i = 0; i < numSequences; i += BATCH_SIZE) {
-      const batchEnd = Math.min(i + BATCH_SIZE, numSequences);
-      batches.push({ start: i, end: batchEnd });
-    }
-
-    try {
-      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-        if (abortController.signal.aborted) {
-          throw new Error('Simulation stopped by user');
-        }
-
-        const batch = batches[batchIndex];
-        setSimulationProgress(`Processing batch ${batchIndex + 1} of ${batches.length} (sequences ${batch.start + 1}-${batch.end})...`);
-
-        const bulkSequences: any[][] = [];
-        const sequenceMetadata: Array<{ sequenceNumber: number; originalIndex: number }> = [];
-
-        for (let i = batch.start; i < batch.end; i++) {
-          const sequenceStartIndex = i * SEQUENCE_LENGTH;
-          const sequenceEndIndex = sequenceStartIndex + SEQUENCE_LENGTH;
-          const rawSequence = parsedData.slice(sequenceStartIndex, sequenceEndIndex);
-
-          const transformedRows = [];
-          for (let j = 0; j < rawSequence.length; j++) {
-            const row = rawSequence[j];
-            const transformedRow = transformRow(row, headerRow);
-            if (transformedRow === null) {
-              continue;
-            }
-            transformedRows.push(transformedRow);
-          }
-
-          if (transformedRows.length !== SEQUENCE_LENGTH) {
-            setSimulationResults(prev => [...prev, {
-              sequenceNumber: i + 1,
-              predictedRul: 0,
-              timestamp: new Date().toISOString(),
-              error: `Sequence ${i + 1} is incomplete after transformation`
-            }]);
-            continue;
-          }
-
-          bulkSequences.push(transformedRows);
-          sequenceMetadata.push({ sequenceNumber: i + 1, originalIndex: i });
-        }
-
-        if (bulkSequences.length > 0) {
-          try {
-            const bulkResponse = processingMode === 'fast'
-              ? await predictRulForAssetBulkFast(assetIdForSim, bulkSequences)
-              : await predictRulForAssetBulk(assetIdForSim, bulkSequences);
-
-            const { predictions } = bulkResponse.data;
-
-
-            const newResults = predictions.map((prediction: any, index: number) => {
-              const metadata = sequenceMetadata[index];
-              return {
-                sequenceNumber: metadata.sequenceNumber,
-                predictedRul: prediction.predicted_rul > 0 ? prediction.predicted_rul : 0,
-                timestamp: new Date().toISOString(),
-                error: prediction.predicted_rul < 0 ? 'Prediction failed' : undefined
-              };
-            });
-
-            setSimulationResults(prev => [...prev, ...newResults]);
-            setCurrentSequence(batch.end);
-
-            if (processingStartTime) {
-              const elapsedSeconds = (Date.now() - processingStartTime) / 1000;
-              const rate = batch.end / elapsedSeconds;
-              setSequencesPerSecond(Math.round(rate * 10) / 10);
-            }
-
-          } catch (error) {
-            console.error('Bulk processing error:', error);
-            const errorResults = sequenceMetadata.map(metadata => ({
-              sequenceNumber: metadata.sequenceNumber,
-              predictedRul: 0,
-              timestamp: new Date().toISOString(),
-              error: `Bulk processing failed: ${(error as Error).message || 'Unknown error'}`
-            }));
-            setSimulationResults(prev => [...prev, ...errorResults]);
-          }
-        }
-
-        if (batchIndex < batches.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
-      }
-
-      setSimulationProgress(`Simulation finished. Processed ${numSequences} sequences in ${batches.length} batches.`);
-    } catch (err: any) {
-      if (err.message === 'Simulation stopped by user') {
-        setSimulationProgress('Simulation stopped by user.');
-      } else {
-        setUploadError(`Simulation failed: ${err.message}`);
-        setSimulationProgress('Simulation failed.');
-      }
-    } finally {
-      setIsProcessing(false);
-      setSimulationAbortController(null);
-    }
-  };
-
-  const stopSimulation = () => {
-    if (simulationAbortController) {
-      simulationAbortController.abort();
-      setSimulationAbortController(null);
-      setIsProcessing(false);
-      setSimulationProgress('Simulation stopped by user.');
-    }
-  };
-
-  const handleRowClick = (assetId: string | number) => {
-    navigate(`/assets/${assetId}`);
-  };
+  if (assetsError) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#F8F9FB] p-4">
+        <AlertTriangle className="h-16 w-16 text-red-500" />
+        <span className="mt-4 text-xl text-red-700">Error loading asset data</span>
+        <p className="text-gray-600 mt-2">{(assetsError as Error)?.message || "Please try refreshing the page."}</p>
+        <Button onClick={() => window.location.reload()} className="mt-4">Refresh</Button>
+      </div>
+    );
+  }
+  
+  // Ensure assets is not null/undefined before using it for calculations or rendering
+  if (!assets) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-[#F8F9FB] p-4">
+        <AlertTriangle className="h-16 w-16 text-yellow-500" />
+        <span className="mt-4 text-xl text-yellow-700">No asset data available</span>
+        <p className="text-gray-600 mt-2">Could not retrieve asset information at this time.</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen w-full bg-[#F7F8FC]"> {/* Updated page background */}
-      <div className="w-full max-w-none px-4 sm:px-6 lg:px-8 py-6 space-y-8">
-        {/* Header */}
-        {/* --- Redesigned Modern Header --- */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="relative flex flex-col md:flex-row items-center justify-between gap-8 px-8 py-10 bg-[#FFFFFF] rounded-2xl shadow-lg border border-[#E0E0E0] mb-10 overflow-hidden" // Updated header bg, shadow, border
-        >
-          {/* Decorative Blobs - Muted and aligned with new palette */}
-          <div className="absolute left-[-60px] top-[-60px] w-56 h-56 bg-[#FF6F00] opacity-5 rounded-full blur-3xl -z-10" /> {/* Orange accent blob, very subtle */}
-          <div className="absolute right-[-80px] bottom-[-80px] w-72 h-72 bg-[#546E7A] opacity-5 rounded-full blur-3xl -z-10" /> {/* Gray accent blob, very subtle */}
-          <div className="flex items-center gap-6">
-            <div className="h-16 w-16 rounded-2xl bg-[#FF6F00] flex items-center justify-center shadow-md border-4 border-white"> {/* Main icon bg to primaryAccent */}
-              <LineChart className="h-9 w-9 text-[#FFFFFF]" />
+    <div className="min-h-screen bg-[#F8F9FB]">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-100 px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+              <BarChart3 className="h-6 w-6 text-white" />
             </div>
-            <div className="flex flex-col gap-2">
-              <h1 className="text-4xl sm:text-5xl font-extrabold text-[#263238] tracking-tight leading-tight drop-shadow-sm"> {/* Title text to primaryText */}
-                RUL Analytics Dashboard
-              </h1>
-              <span className="text-lg font-medium text-[#546E7A] flex items-center gap-2"> {/* Subtitle text to secondaryText */}
-                <Zap className="h-5 w-5 text-[#FF6F00]" /> {/* Icon color to primaryAccent */}
-                AI-powered predictive maintenance & insights
-              </span>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">RUL Analytics</h1>
+              <p className="text-sm text-gray-500">Predictive Maintenance Dashboard</p>
             </div>
           </div>
-          <div className="flex flex-col gap-3 items-end">
-            <Button className="bg-[#FF6F00] text-white font-semibold shadow-md px-7 py-3 rounded-xl text-lg hover:bg-[#E65100] transition-all flex items-center gap-2"> {/* Live Monitor button to primaryAccent */}
-              <Activity className="h-5 w-5" /> Live Monitor
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Search className="h-4 w-4" />
+              Search
             </Button>
-            <div className="flex gap-3">
-              <Button variant="outline" className="border-[#FF6F00] text-[#FF6F00] font-semibold px-5 py-2.5 rounded-lg hover:bg-[#FFE0B2] flex items-center gap-2"> {/* Diagnostics button to primaryAccent */}
-                <BarChart3 className="h-4 w-4 text-[#FF6F00]" /> Diagnostics
-              </Button>
-              <Button variant="outline" className="border-[#D32F2F] text-[#D32F2F] font-semibold px-5 py-2.5 rounded-lg hover:bg-[#FFCDD2] flex items-center gap-2"> {/* Alerts button to errorAccent */}
-                <AlertTriangle className="h-4 w-4 text-[#D32F2F]" /> Alerts
-              </Button>
-            </div>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Bell className="h-4 w-4" />
+              Alerts
+            </Button>
+            <Button variant="outline" size="sm" className="gap-2">
+              <Settings className="h-4 w-4" />
+              Settings
+            </Button>
           </div>
-        </motion.div>
+        </div>
+      </div>
 
-        {/* KPI Cards */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative" // Increased gap slightly
-        >
-          {/* Total Assets */}
-          <Card className="bg-[#FFFFFF] border border-[#E0E0E0] shadow-md rounded-xl overflow-hidden hover:shadow-lg transition-all group"> {/* Card styling update */}
-            <div className="absolute inset-x-0 top-0 h-1.5 bg-[#FF6F00]"></div> {/* Accent bar to primaryAccent */}
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5"> {/* Added padding */}
-              <CardTitle className="text-sm font-medium text-[#546E7A]">Total Assets</CardTitle> {/* Text to secondaryText */}
-              <div className="h-8 w-8 rounded-lg bg-[#FFE0B2] flex items-center justify-center group-hover:bg-[#FFCC80] transition-colors"> {/* Icon bg to primaryAccentLight */}
-                <Database className="h-4 w-4 text-[#FF6F00]" /> {/* Icon color to primaryAccent */}
+      <div className="p-6 space-y-6">
+        {/* Main Balance Card - Inspired by the image */}
+        <Card className="bg-white rounded-2xl shadow-sm border-0 overflow-hidden">
+          <CardContent className="p-8">
+            <div className="flex items-center justify-between mb-8">
+              <div>
+                <p className="text-sm text-gray-500 mb-1">Total Asset Health Score</p>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-4xl font-bold text-gray-900">
+                    {totalAssets > 0 ? ((healthyAssets * 100 + warningAssets * 60 + criticalAssets * 20) / totalAssets).toFixed(1) : "0.0"}
+                  </span>
+                  <span className="text-lg text-gray-500">/ 100</span>
+                  {/* <Badge className="bg-green-100 text-green-700 border-0 ml-2">+2.4%</Badge> */} {/* Commented out as avgRul related element is removed */}
+                </div>
               </div>
-            </CardHeader>
-            <CardContent className="pb-5 px-5"> {/* Added padding */}
-              <div className="text-3xl font-bold text-[#263238] mb-1">{totalAssets}</div> {/* Text to primaryText */}
-              <div className="flex items-center">
-                <span className="text-xs text-[#546E7A]">Monitored equipment</span> {/* Text to secondaryText */}
-                <span className="ml-auto text-xs text-[#43A047] flex items-center gap-1"> {/* Positive change text, keep green for now or use primaryAccent */}
-                  <ArrowUp className="h-3 w-3 text-[#43A047]" />
-                  <span>12%</span>
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-          {/* Critical */}
-          <Card className="bg-[#FFFFFF] border border-[#E0E0E0] shadow-md rounded-xl overflow-hidden hover:shadow-lg transition-all group"> {/* Card styling update */}
-            <div className="absolute inset-x-0 top-0 h-1.5 bg-[#D32F2F]"></div> {/* Accent bar to errorAccent */}
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5">
-              <CardTitle className="text-sm font-medium text-[#546E7A]">Critical</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-[#FFCDD2] flex items-center justify-center group-hover:bg-[#EF9A9A] transition-colors"> {/* Icon bg to errorAccentLight */}
-                <AlertTriangle className="h-4 w-4 text-[#D32F2F]" /> {/* Icon color to errorAccent */}
-              </div>
-            </CardHeader>
-            <CardContent className="pb-5 px-5">
-              <div className="text-3xl font-bold text-[#263238] mb-1">{criticalAssets}</div>
-              <div className="flex items-center">
-                <span className="text-xs text-[#546E7A]">Immediate attention</span>
-                <span className="ml-auto text-xs text-[#D32F2F] flex items-center gap-1"> {/* Text to errorAccent */}
-                  <LucideAlertCircle className="h-3 w-3 text-[#D32F2F]" />
-                  <span>High priority</span>
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-          {/* Warning */}
-          <Card className="bg-[#FFFFFF] border border-[#E0E0E0] shadow-md rounded-xl overflow-hidden hover:shadow-lg transition-all group"> {/* Card styling update */}
-            <div className="absolute inset-x-0 top-0 h-1.5 bg-[#FFA000]"></div> {/* Accent bar to warningAccent */}
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5">
-              <CardTitle className="text-sm font-medium text-[#546E7A]">Warning</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-[#FFECB3] flex items-center justify-center group-hover:bg-[#FFD54F] transition-colors"> {/* Icon bg to warningAccentLight */}
-                <Clock className="h-4 w-4 text-[#FFA000]" /> {/* Icon color to warningAccent */}
-              </div>
-            </CardHeader>
-            <CardContent className="pb-5 px-5">
-              <div className="text-3xl font-bold text-[#263238] mb-1">{warningAssets}</div>
-              <div className="flex items-center">
-                <span className="text-xs text-[#546E7A]">Schedule maintenance</span>
-                <span className="ml-auto text-xs text-[#FFA000] flex items-center gap-1"> {/* Text to warningAccent */}
-                  <Clock className="h-3 w-3 text-[#FFA000]" />
-                  <span>Medium priority</span>
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-          {/* Healthy */}
-          <Card className="bg-[#FFFFFF] border border-[#E0E0E0] shadow-md rounded-xl overflow-hidden hover:shadow-lg transition-all group"> {/* Card styling update */}
-            <div className="absolute inset-x-0 top-0 h-1.5 bg-[#43A047]"></div> {/* Accent bar to successAccent */}
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 pt-5 px-5">
-              <CardTitle className="text-sm font-medium text-[#546E7A]">Healthy</CardTitle>
-              <div className="h-8 w-8 rounded-lg bg-[#C8E6C9] flex items-center justify-center group-hover:bg-[#A5D6A7] transition-colors"> {/* Icon bg to successAccentLight */}
-                <CheckCircle className="h-4 w-4 text-[#43A047]" /> {/* Icon color to successAccent */}
-              </div>
-            </CardHeader>
-            <CardContent className="pb-5 px-5">
-              <div className="text-3xl font-bold text-[#263238] mb-1">{healthyAssets}</div>
-              <div className="flex items-center">
-                <span className="text-xs text-[#546E7A]">Operating normally</span>
-                <span className="ml-auto text-xs text-[#43A047] flex items-center gap-1"> {/* Text to successAccent */}
-                  <Check className="h-3 w-3 text-[#43A047]" />
-                  <span>Good condition</span>
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-        </motion.div>
-
-        {/* Main Content Tabs */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          <Tabs defaultValue="analysis" className="space-y-6">
-            <div className="flex justify-center mb-2">
-              <div className="px-1 py-1 bg-white rounded-xl border border-[#F7F7F7] shadow-md">
-                <TabsList className="grid w-full grid-cols-3 bg-transparent">
-                  <TabsTrigger value="analysis" className="gap-2 data-[state=active]:bg-[#D4FF6D] data-[state=active]:text-[#1E1E2D] hover:text-[#1E1E2D] text-[#8A8A8A] rounded-lg mr-1 transition-all duration-300 shadow-inner">
-                    <Zap className="h-4 w-4" />
-                    Analysis
-                  </TabsTrigger>
-                  <TabsTrigger value="assets" className="gap-2 data-[state=active]:bg-[#D4FF6D] data-[state=active]:text-[#1E1E2D] hover:text-[#1E1E2D] text-[#8A8A8A] rounded-lg mr-1 transition-all duration-300 shadow-inner">
-                    <Users className="h-4 w-4" />
-                    Assets
-                  </TabsTrigger>
-                  <TabsTrigger value="insights" className="gap-2 data-[state=active]:bg-[#D4FF6D] data-[state=active]:text-[#1E1E2D] hover:text-[#1E1E2D] text-[#8A8A8A] rounded-lg transition-all duration-300 shadow-inner">
-                    <TrendingUp className="h-4 w-4" />
-                    Insights
-                  </TabsTrigger>
-                </TabsList>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm">
+                  Income
+                </Button>
+                <Button variant="outline" size="sm">
+                  Expenses
+                </Button>
               </div>
             </div>
 
-            <TabsContent value="analysis" className="space-y-6">
-              <Card className="border-0 bg-white rounded-2xl shadow-xl overflow-hidden relative">
-                {/* Remove decorative gradient blob */}
-                <CardHeader className="relative z-10 pb-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="h-8 w-8 rounded-lg bg-[#D4FF6D] flex items-center justify-center shadow-md">
-                          <Activity className="h-5 w-5 text-[#1E1E2D]" />
-                        </div>
-                        <CardTitle className="text-lg font-bold text-[#333333] tracking-tight">AI-Powered Analysis Engine</CardTitle>
-                      </div>
-                      <CardDescription className="text-[#8A8A8A]">
-                        Upload sensor data for real-time RUL predictions using our advanced CNN-LSTM model
-                      </CardDescription>
+            {/* Chart Area - Simplified for demo */}
+            <div className="h-64 bg-gradient-to-br from-blue-50 to-purple-50 rounded-xl flex items-center justify-center mb-6">
+              <div className="text-center w-full px-4"> {/* Added w-full and px-4 for better chart fitting */}
+                <p className="text-sm text-gray-500">Fleet RUL Overview (Top 5 Assets)</p>
+                {/* <div className="text-2xl font-bold">$125,430</div> Removed placeholder financial data */}
+                {/* <p className="text-xs text-muted-foreground">
+                      +12% from last month
+                </p> Removed placeholder financial data */}
+                <div className="h-[180px]"> {/* Increased height for better visibility */}
+                      <ResponsiveContainer width="100%" height="100%">
+                        {/* ... existing commented out LineChart ... */}
+                        <BarChart data={fleetRulChartData}> {/* Changed data source to fleetRulChartData */}
+                          <XAxis dataKey="name" angle={-15} textAnchor="end" interval={0} tick={{ fontSize: 10 }} /> {/* Adjusted XAxis for readability */}
+                          <YAxis tick={{ fontSize: 10 }} />
+                          <Tooltip />
+                          <Legend wrapperStyle={{ fontSize: '12px' }} />
+                          <Bar dataKey="RUL" fill="#8884d8" />
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <div className={`px-3 py-2 ${advancedMode ? 'bg-gradient-to-r from-blue-100 to-purple-100' : 'bg-slate-100'} rounded-lg flex items-center gap-2 transition-all duration-300 border border-slate-200`}>
-                        <Label htmlFor="advanced-mode-switch-main" className={`text-sm ${advancedMode ? 'text-blue-500' : 'text-slate-500'}`}>Advanced Mode</Label>
-                        <Switch
-                          id="advanced-mode-switch-main"
-                          checked={advancedMode}
-                          onCheckedChange={setAdvancedMode}
-                          className="data-[state=checked]:bg-gradient-to-r data-[state=checked]:from-blue-400 data-[state=checked]:to-purple-400 data-[state=checked]:border-blue-400"
-                        />
-                      </div>
+              </div>
+            </div>
+
+            {/* Quick Actions - Inspired by the image */}
+            <div className="grid grid-cols-6 gap-4">
+              {[
+                { icon: Upload, label: "Upload", color: "bg-blue-100 text-blue-600" },
+                { icon: Database, label: "Data", color: "bg-purple-100 text-purple-600" },
+                { icon: BarChart3, label: "Analytics", color: "bg-green-100 text-green-600" },
+                { icon: Shield, label: "Security", color: "bg-orange-100 text-orange-600" },
+                { icon: Settings, label: "Settings", color: "bg-gray-100 text-gray-600" },
+                { icon: MoreHorizontal, label: "More", color: "bg-indigo-100 text-indigo-600" },
+              ].map((action, index) => (
+                <Button key={index} variant="ghost" className="h-16 flex-col gap-2 hover:bg-gray-50">
+                  <div className={`h-8 w-8 rounded-lg ${action.color} flex items-center justify-center`}>
+                    <action.icon className="h-4 w-4" />
+                  </div>
+                  <span className="text-xs text-gray-600">{action.label}</span>
+                </Button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - KPI Cards */}
+          <div className="lg:col-span-2 space-y-6">
+            {/* KPI Grid */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <Card className="bg-white rounded-xl shadow-sm border-0">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-8 w-8 rounded-lg bg-blue-100 flex items-center justify-center">
+                      <Database className="h-4 w-4 text-blue-600" />
+                    </div>
+                    {/* <Badge variant="secondary" className="text-xs"> 
+                      +12% 
+                    </Badge> */}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-2xl font-bold text-gray-900">{totalAssets}</p>
+                    <p className="text-xs text-gray-500">Total Assets</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white rounded-xl shadow-sm border-0">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-8 w-8 rounded-lg bg-red-100 flex items-center justify-center">
+                      <AlertTriangle className="h-4 w-4 text-red-600" />
+                    </div>
+                    <Badge variant="destructive" className="text-xs">
+                      {totalAssets > 0 ? ((criticalAssets / totalAssets) * 100).toFixed(0) : 0}%
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-2xl font-bold text-gray-900">{criticalAssets}</p>
+                    <p className="text-xs text-gray-500">Critical</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white rounded-xl shadow-sm border-0">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-8 w-8 rounded-lg bg-yellow-100 flex items-center justify-center">
+                      <Clock className="h-4 w-4 text-yellow-600" />
+                    </div>
+                    <Badge className="bg-yellow-100 text-yellow-700 text-xs">
+                      {totalAssets > 0 ? ((warningAssets / totalAssets) * 100).toFixed(0) : 0}%
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-2xl font-bold text-gray-900">{warningAssets}</p>
+                    <p className="text-xs text-gray-500">Warning</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="bg-white rounded-xl shadow-sm border-0">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="h-8 w-8 rounded-lg bg-green-100 flex items-center justify-center">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    </div>
+                    <Badge className="bg-green-100 text-green-700 text-xs">
+                      {totalAssets > 0 ? ((healthyAssets / totalAssets) * 100).toFixed(0) : 0}%
+                    </Badge>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-2xl font-bold text-gray-900">{healthyAssets}</p>
+                    <p className="text-xs text-gray-500">Healthy</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Processing Card - RUL Simulation */}
+            <Card className="bg-white rounded-xl shadow-sm border-0">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-xl font-semibold flex items-center">
+                  <Upload className="h-5 w-5 mr-2 text-blue-600" />
+                  RUL Simulation via CSV Upload
+                </CardTitle>
+                <CardDescription>
+                  Upload sensor data, specify an asset ID, and run RUL predictions.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* File Upload */}
+                <div className="space-y-2">
+                  <label htmlFor="csv-upload" className="text-sm font-medium text-gray-700">
+                    Upload CSV File
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      id="csv-upload"
+                      type="file"
+                      accept=".csv"
+                      onChange={handleFileChange}
+                      className="flex-grow"
+                    />
+                    <Button onClick={handleParseCsv} disabled={!selectedFile || isParsing} variant="outline">
+                      {isParsing ? (
+                        <Activity className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Parse CSV
+                    </Button>
+                  </div>
+                  {selectedFile && <p className="text-xs text-gray-500">Selected: {selectedFile.name}</p>}
+                </div>
+
+                {/* Asset ID Input - Placed here for better flow */}
+                {parsedData && headerRow.length > 0 && (
+                  <div className="space-y-2">
+                    <label htmlFor="asset-id-sim" className="text-sm font-medium text-gray-700">
+                      Asset ID for Simulation
+                    </label>
+                    <Input
+                      id="asset-id-sim"
+                      placeholder="Enter Asset ID (e.g., asset_123)"
+                      value={assetIdForSim}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAssetIdForSim(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                {/* Advanced Options */}
+                {parsedData && headerRow.length > 0 && (
+                    <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div>
+                            <label htmlFor="processing-mode" className="text-sm font-medium text-gray-700 block mb-1">Processing Mode</label>
+                            <Select value={processingMode} onValueChange={(value: 'fast' | 'standard') => setProcessingMode(value)}>
+                                <SelectTrigger id="processing-mode">
+                                    <SelectValue placeholder="Select mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="fast">Fast</SelectItem>
+                                    <SelectItem value="standard">Standard</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div>
+                            <label htmlFor="batch-size" className="text-sm font-medium text-gray-700 block mb-1">Batch Size</label>
+                            <Input 
+                                id="batch-size"
+                                type="number" 
+                                value={batchSize} 
+                                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBatchSize(Math.max(1, parseInt(e.target.value, 10) || 1))} 
+                                placeholder="e.g., 30"
+                            />
+                        </div>
+                    </div>
+                )}
+
+                {/* Action Buttons */}
+                {parsedData && headerRow.length > 0 && (
+                  <div className="flex items-center space-x-2 pt-2">
+                    <Button
+                      onClick={handleStartSimulation}
+                      disabled={isProcessing || !parsedData || !assetIdForSim.trim()}
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      {isProcessing ? (
+                        <Activity className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <PlayCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Start Simulation
+                    </Button>
+                    {isProcessing && (
+                      <Button onClick={stopSimulation} variant="destructive">
+                        <StopCircle className="h-4 w-4 mr-2" />
+                        Stop
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Simulation Progress Text */}
+                {simulationProgressText && (
+                  <p className="mt-2 text-sm text-gray-600">{simulationProgressText}</p>
+                )}
+
+                {/* General Upload Error Display */}
+                {uploadError && (
+                  <div className="mt-4 p-3 rounded-md bg-red-50 border border-red-300 text-red-700 text-sm flex items-start">
+                    <AlertTriangle className="h-5 w-5 mr-2 flex-shrink-0" />
+                    <div>
+                        <p className="font-semibold">Error</p>
+                        <p>{uploadError}</p>
                     </div>
                   </div>
-                </CardHeader>
-                <CardContent className="space-y-8 relative z-10">
-                  {/* File Upload and Processing */}
-                  <Card className="border-0 bg-white rounded-xl shadow-md overflow-hidden">
-                    <CardHeader>
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 rounded-lg bg-[#D4FF6D]">
-                          <Upload className="h-4 w-4 text-white" />
-                        </div>
-                        <div className="flex flex-col">
-                          <CardTitle className="text-lg text-[#333333] font-semibold">Data Import & Processing</CardTitle>
-                          <CardDescription className="text-[#8A8A8A]">Upload CSV sensor data for RUL prediction</CardDescription>
-                        </div>
+                )}
+                
+                {/* Validation Summary and Details */}
+                {/* This section is displayed if there are no general upload errors AND there are validation issues */}
+                {!uploadError && (validationWarnings.length > 0 || droppedRowCount > 0 || skippedSequenceCount > 0) && (
+                  <div className="mt-4 p-3 bg-orange-50 border border-orange-200 rounded-md text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        <AlertTriangle className="h-5 w-5 text-orange-500 mr-2" />
+                        <span className="font-semibold text-orange-700">Data Validation Notice</span>
                       </div>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-6">
-                        <div className="grid gap-6 md:grid-cols-2">
-                          {/* File Uploader */}
-                          <motion.div
-                            whileHover={{ scale: 1.01 }}
-                            transition={{ type: "spring", stiffness: 300 }}
-                            className="relative overflow-hidden"
-                          >
-                            <div className="relative border-2 border-dashed border-[#E0E0E0] hover:border-[#FF6F00] transition-all rounded-xl flex flex-col items-center justify-center gap-3 p-8 bg-[#FFFFFF] cursor-pointer group"> {/* Added 'relative' to this div */}
-                              <div className="p-3 bg-[#FFE0B2] rounded-full">
-                                <Upload className="h-6 w-6 text-[#FF6F00]" />
-                              </div>
-                              <div className="text-center">
-                                <p className="font-medium text-[#263238]">
-                                  {selectedFile ? selectedFile.name : 'Drop CSV file or click to browse'}
-                                </p>
-                                <p className="text-xs text-[#546E7A] mt-1">
-                                  Make sure it contains X/Y direction, bearing and env temp
-                                </p>
-                              </div>
-                              <Input
-                                type="file"
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" // Ensured it covers parent, added z-index
-                                accept=".csv"
-                                onChange={handleFileChange}
-                              />
-                            </div>
-                          </motion.div>
-                          {/* Options Panel */}
-                          <div className="space-y-5 p-6 rounded-xl bg-[#FFFFFF] border border-[#E0E0E0]"> {/* Updated bg, border */}
-                            <div className="flex justify-between items-center">
-                              <Label htmlFor="assetId" className="text-[#263238]">Asset ID</Label> {/* Text to primaryText */}
-                              <Input
-                                id="assetId"
-                                placeholder="Optional asset identifier"
-                                value={assetIdForSim}
-                                onChange={e => setAssetIdForSim(e.target.value)}
-                                className="max-w-[200px] bg-[#F7F8FC] border-[#E0E0E0] text-[#263238] placeholder:text-[#546E7A] focus:ring-[#FF6F00] focus:border-[#FF6F00]" // Updated bg, border, text, placeholder, focus colors
-                              />
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <div className="flex space-x-2 items-center">
-                                <div className="flex h-5 items-center">
-                                  <Switch
-                                    id="advanced-mode-switch-options"
-                                    checked={advancedMode}
-                                    onCheckedChange={setAdvancedMode}
-                                    className="data-[state=checked]:bg-[#FF6F00] data-[state=unchecked]:bg-[#E0E0E0]" // Updated switch colors
-                                  />
-                                </div>
-                                <Label htmlFor="advanced-mode-switch-options" className="text-[#263238]">Advanced Options</Label> {/* Text to primaryText */}
-                              </div>
-                            </div>
-                            {advancedMode && (
-                              <motion.div
-                                initial={{ height: 0, opacity: 0 }}
-                                animate={{ height: 'auto', opacity: 1 }}
-                                exit={{ height: 0, opacity: 0 }}
-                                className="space-y-3 pt-2"
-                              >
-                                <div className="grid grid-cols-2 gap-4">
-                                  <div className="space-y-1">
-                                    <Label htmlFor="batch-size" className="text-xs text-[#546E7A]">Batch Size</Label> {/* Text to secondaryText */}
-                                    <Select
-                                      value={batchSize.toString()}
-                                      onValueChange={(value) => setBatchSize(parseInt(value))}
-                                    >
-                                      <SelectTrigger className="bg-[#F7F8FC] border-[#E0E0E0] text-[#263238]"> {/* Updated bg, border, text */}
-                                        <SelectValue placeholder="Batch Size" />
-                                      </SelectTrigger>
-                                      <SelectContent className="bg-[#FFFFFF] border-[#E0E0E0] text-[#263238]"> {/* Updated bg, border, text */}
-                                        <SelectItem value="10">10</SelectItem>
-                                        <SelectItem value="30">30</SelectItem>
-                                        <SelectItem value="50">50</SelectItem>
-                                        <SelectItem value="100">100</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <Label htmlFor="processing-mode" className="text-xs text-[#546E7A]">Processing Mode</Label> {/* Text to secondaryText */}
-                                    <Select
-                                      value={processingMode}
-                                      onValueChange={(value) => setProcessingMode(value as 'fast' | 'standard')}
-                                    >
-                                      <SelectTrigger className="bg-[#F7F8FC] border-[#E0E0E0] text-[#263238]"> {/* Updated bg, border, text */}
-                                        <SelectValue placeholder="Mode" />
-                                      </SelectTrigger>
-                                      <SelectContent className="bg-[#FFFFFF] border-[#E0E0E0] text-[#263238]"> {/* Updated bg, border, text */}
-                                        <SelectItem value="fast">Fast</SelectItem>
-                                        <SelectItem value="standard">Standard</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                </div>
-                              </motion.div>
-                            )}
-                            <div className="pt-2 flex flex-col gap-2">
-                              <Button
-                                onClick={handleParseCsv}
-                                disabled={!selectedFile || isParsing}
-                                className="bg-[#FF6F00] hover:bg-[#E65100] text-white shadow-md" // Updated button to primaryAccent
-                              >
-                                {isParsing ? (
-                                  <>
-                                    <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-t-transparent border-white" /> {/* Spinner color to white */}
-                                    Parsing...
-                                  </>
-                                ) : 'Parse CSV'}
-                              </Button>
-                              {parsedData && (
-                                <Button
-                                  onClick={handleStartSimulation}
-                                  disabled={isProcessing || !parsedData || parsedData.length === 0 || simulationAbortController !== null}
-                                  className="bg-[#43A047] hover:bg-[#388E3C] text-white shadow-md" // Start button to successAccent
-                                >
-                                  <PlayCircle className="mr-2 h-4 w-4" />
-                                  Start Processing
-                                </Button>
-                              )}
-                              {isProcessing && simulationAbortController && (
-                                <Button
-                                  onClick={stopSimulation}
-                                  variant="destructive"
-                                  className="bg-[#D32F2F] hover:bg-[#C62828] text-white shadow-md" // Stop button to errorAccent
-                                >
-                                  <StopCircle className="mr-2 h-4 w-4" />
-                                  Stop Processing
-                                </Button>
-                              )}
-                            </div>
-                            {simulationProgress && (
-                              <div className="p-3 bg-[#FFE0B2] border border-[#FFCC80] rounded-md"> {/* Progress bg to primaryAccentLight, border to lighter primaryAccent */}
-                                <p className="text-sm text-[#FF6F00]">{simulationProgress}</p> {/* Progress text to primaryAccent */}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        {uploadError && (
-                          <motion.div
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="p-3 bg-[#FFCDD2] border border-[#EF9A9A] rounded-md" // Error bg to errorAccentLight, border to lighter errorAccent
-                          >
-                            <p className="text-sm text-[#D32F2F]">{uploadError}</p> {/* Error text to errorAccent */}
-                          </motion.div>
-                        )}
-                        {/* Data Preview */}
-                        {parsedData && (
-                          <Card className="border-0 bg-white rounded-2xl shadow-xl overflow-hidden relative">
-                            {/* Modern Data Preview Header */}
-                            <CardHeader className="relative z-10 pb-4 flex flex-row items-center gap-4 bg-[#F4F6FB] border-b border-[#E0E0EF] rounded-t-2xl">
-                              <div className="h-10 w-10 rounded-xl bg-[#A98BFF] flex items-center justify-center shadow-md">
-                                <Database className="h-6 w-6 text-white" />
-                              </div>
-                              <div className="flex flex-col gap-1">
-                                <CardTitle className="text-xl font-bold text-[#232946] tracking-tight">Data Preview</CardTitle>
-                                <CardDescription className="text-[#A0A4B8]">First 5 rows of your uploaded sensor data</CardDescription>
-                              </div>
-                            </CardHeader>
-                            <CardContent className="space-y-8 relative z-10">
-                              <div className="overflow-hidden rounded-lg border border-[#E3E6ED] bg-[#FFFFFF]">
-                                <div className="overflow-x-auto max-h-40 scrollbar-thin scrollbar-thumb-[#D1D5E0] scrollbar-track-[#F6F7FA]">
-                                  <table className="w-full text-sm">
-                                    <thead className="bg-[#F6F7FA]">
-                                      <tr>
-                                        {headerRow.slice(0, 6).map((header, index) => (
-                                          <th key={index} className="px-3 py-2 text-left font-semibold text-[#2D3A5A] uppercase tracking-wider">
-                                            {header}
-                                          </th>
-                                        ))}
-                                        {headerRow.length > 6 && (
-                                          <th className="px-3 py-2 text-left font-semibold text-[#7A7F8C]">...</th>
-                                        )}
-                                      </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-[#F6F7FA]">
-                                      {parsedData.slice(0, 5).map((row, rowIndex) => (
-                                        <tr key={rowIndex} className="hover:bg-[#F6F7FA] transition-colors">
-                                          {headerRow.slice(0, 6).map((header, colIndex) => (
-                                            <td key={colIndex} className="px-3 py-2 text-[#232946]">
-                                              {typeof row[header] === 'number'
-                                                ? Number(row[header]).toFixed(3)
-                                                : row[header]
-                                              }
-                                            </td>
-                                          ))}
-                                          {headerRow.length > 6 && (
-                                            <td className="px-3 py-2 text-[#7A7F8C]">...</td>
-                                          )}
-                                        </tr>
-                                      ))}
-                                    </tbody>
-                                  </table>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                  {/* Processing Results */}
-                  {simulationResults.length > 0 && (
-                    <AnimatePresence>
-                      <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="space-y-6"
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => setShowValidationDetails(!showValidationDetails)}
+                        className="text-orange-600 hover:text-orange-700"
                       >
-                        {/* Enhanced KPIs */}
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                          <Card className="bg-[#A98BFF] border-0 shadow-lg rounded-xl overflow-hidden">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-purple-600 to-purple-400"></div>
-                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-purple-500/10 rounded-full filter blur-3xl opacity-60 group-hover:opacity-100 transition-opacity"></div>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-purple-400">Avg RUL</p>
-                                  <p className="text-2xl font-bold text-white">
-                                    {successfulPredictions.length > 0
-                                      ? (successfulPredictions.reduce((sum, p) => sum + p.predictedRul, 0) / successfulPredictions.length).toFixed(0)
-                                      : '0'
-                                    }
-                                  </p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-purple-500/10">
-                                  <Target className="h-5 w-5 text-purple-400" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="bg-[#FFB86B] border-0 shadow-lg rounded-xl overflow-hidden">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-indigo-600 to-indigo-400"></div>
-                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-indigo-500/10 rounded-full filter blur-3xl opacity-60 group-hover:opacity-100 transition-opacity"></div>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-indigo-400">Min RUL</p>
-                                  <p className="text-2xl font-bold text-white">
-                                    {successfulPredictions.length > 0
-                                      ? Math.min(...successfulPredictions.map(p => p.predictedRul)).toFixed(0)
-                                      : '0'
-                                    }
-                                  </p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-indigo-500/10">
-                                  <Shield className="h-5 w-5 text-indigo-400" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="bg-[#4CB6B6] border-0 shadow-lg rounded-xl overflow-hidden">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-cyan-600 to-cyan-400"></div>
-                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-cyan-500/10 rounded-full filter blur-3xl opacity-60 group-hover:opacity-100 transition-opacity"></div>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-cyan-400">Max RUL</p>
-                                  <p className="text-2xl font-bold text-white">
-                                    {successfulPredictions.length > 0
-                                      ? Math.max(...successfulPredictions.map(p => p.predictedRul)).toFixed(0)
-                                      : '0'
-                                    }
-                                  </p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-cyan-500/10">
-                                  <TrendingUp className="h-5 w-5 text-cyan-400" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="bg-[#7ED957] border-0 shadow-lg rounded-xl overflow-hidden">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-600 to-emerald-400"></div>
-                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-emerald-500/10 rounded-full filter blur-3xl opacity-60 group-hover:opacity-100 transition-opacity"></div>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-emerald-400">Progress</p>
-                                  <p className="text-2xl font-bold text-white">
-                                    {totalSequences > 0
-                                      ? ((completedSequences / totalSequences) * 100).toFixed(1)
-                                      : '0'
-                                    }%
-                                  </p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-emerald-500/10">
-                                  <Gauge className="h-5 w-5 text-emerald-400" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          <Card className="bg-[#F4F6FB] border-0 shadow-lg rounded-xl overflow-hidden">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-orange-600 to-orange-400"></div>
-                            <div className="absolute -top-12 -right-12 w-32 h-32 bg-orange-500/10 rounded-full filter blur-3xl opacity-60 group-hover:opacity-100 transition-opacity"></div>
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div>
-                                  <p className="text-sm font-medium text-orange-400">Speed</p>
-                                  <p className="text-2xl font-bold text-white">
-                                    {sequencesPerSecond.toFixed(1)} seq/s
-                                  </p>
-                                </div>
-                                <div className="p-2 rounded-lg bg-orange-500/10">
-                                  <Activity className="h-5 w-5 text-orange-400" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        </div>
-
-                        {/* Enhanced Charts Section */}
-                        <div className="space-y-6">
-                          {/* Real-Time Progress Chart - Prominent Top Position */}
-                          <Card className="border-0 shadow-2xl bg-gradient-to-br from-blue-50 via-white to-purple-50 backdrop-blur-sm">
-                            <CardHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-t-lg">
-                              <CardTitle className="flex items-center justify-between text-xl">
-                                <div className="flex items-center gap-3">
-                                  <LineChart className="h-6 w-6" />
-                                  Real-Time RUL Predictions
-                                </div>
-                                <Badge variant="secondary" className="bg-white/20 text-white">
-                                  Live
-                                </Badge>
-                              </CardTitle>
-                              <CardDescription className="text-blue-100">
-                                Monitor RUL predictions as they are generated in real-time
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent className="p-6">
-                              <div className="h-96 lg:h-[500px]">
-                                <RealTimeProgressChart
-                                  data={successfulPredictions}
-                                  isProcessing={isProcessing}
-                                />
-                              </div>
-                            </CardContent>
-                          </Card>
-
-                          {/* Secondary Charts Row */}
-                          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                            {/* RUL Distribution Chart */}
-                            {successfulPredictions.length > 0 && (
-                              <Card className="border-0 shadow-xl bg-gradient-to-br from-purple-50 via-white to-pink-50 backdrop-blur-sm">
-                                <CardHeader className="bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-t-lg">
-                                  <CardTitle className="flex items-center gap-3">
-                                    <BarChart3 className="h-5 w-5" />
-                                    RUL Distribution Analysis
-                                  </CardTitle>
-                                  <CardDescription className="text-purple-100">
-                                    Distribution of predicted remaining useful life values
-                                  </CardDescription>
-                                </CardHeader>
-                                <CardContent className="p-6">
-                                  <div className="h-80 lg:h-96">
-                                    <RulDistributionChart predictions={successfulPredictions} />
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            )}
-
-                            {/* Live Alerts Panel */}
-                            <Card className="border-0 shadow-xl bg-gradient-to-br from-red-50 via-white to-orange-50 backdrop-blur-sm">
-                              <CardHeader className="bg-gradient-to-r from-red-600 to-orange-600 text-white rounded-t-lg">
-                                <CardTitle className="flex items-center gap-3">
-                                  <AlertTriangle className="h-5 w-5" />
-                                  Critical Alerts
-                                </CardTitle>
-                                <CardDescription className="text-red-100">
-                                  Real-time alerts for critical RUL thresholds
-                                </CardDescription>
-                              </CardHeader>
-                              <CardContent className="p-6">
-                                <AlertsPanel predictions={successfulPredictions} />
-                              </CardContent>
-                            </Card>
-                          </div>
-
-                          {/* Processing Status - Full Width at Bottom */}
-                          <Card className="border-0 shadow-xl bg-[rgba(16,23,42,0.7)] backdrop-blur-sm rounded-xl overflow-hidden border border-slate-800/50">
-                            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-600 to-teal-500"></div>
-                            <CardHeader className="bg-gradient-to-r from-emerald-600/20 to-teal-600/20 text-white rounded-t-lg border-b border-slate-700/50">
-                              <CardTitle className="flex items-center gap-3 text-white">
-                                <Activity className="h-5 w-5 text-emerald-400" />
-                                Processing Status & Performance
-                              </CardTitle>
-                              <CardDescription className="text-slate-400">
-                                Monitor the analysis progress and system performance
-                              </CardDescription>
-                            </CardHeader>
-                            <CardContent className="p-6">
-                              <ProcessingStatus
-                                currentSequence={currentSequence}
-                                totalSequences={totalSequences}
-                                isProcessing={isProcessing}
-                                completedSequences={completedSequences}
-                                errorSequences={errorSequences}
-                              />
-                            </CardContent>
-                          </Card>
-                        </div>
-                      </motion.div>
-                    </AnimatePresence>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="assets">
-              <Card className="border-0 shadow-xl bg-white rounded-xl overflow-hidden border border-slate-200">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-[#333333]">
-                    <Users className="h-5 w-5 text-[#D4EFFF]" />
-                    Asset Overview
-                  </CardTitle>
-                  <CardDescription className="text-[#8A8A8A]">
-                    Monitor all your equipment with real-time health status
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {isLoading ? (
-                    <div className="flex items-center justify-center py-12">
-                      <Activity className="h-8 w-8 animate-spin text-blue-400" />
-                      <span className="ml-2 text-slate-500">Loading assets...</span>
+                        {showValidationDetails ? 'Hide Details' : 'Show Details'}
+                        {showValidationDetails ? <ChevronUp className="h-4 w-4 ml-1" /> : <ChevronDown className="h-4 w-4 ml-1" />}
+                      </Button>
                     </div>
-                  ) : error ? (
-                    <div className="text-red-500">Error loading assets.</div>
-                  ) : data && data.length > 0 ? (
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-slate-200">
-                        <thead className="bg-slate-100">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Asset ID</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Latest RUL</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Last Update</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-slate-100">
-                          {data.map((asset) => (
-                            <tr key={asset.id} onClick={() => handleRowClick(asset.id)} className="hover:bg-slate-50 cursor-pointer">
-                              <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-500">{asset.id}</td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-700">{asset.latest_rul?.toLocaleString() ?? 'N/A'}</td>
-                              <td className="px-6 py-4 whitespace-nowrap">
-                                <RulSparkline assetId={asset.id} />
-                                <Badge variant={(asset.latest_rul ?? Infinity) <= 20000 ? "destructive" : (asset.latest_rul ?? Infinity) <= 60000 ? "secondary" : "default"} className="ml-2">
-                                  {(asset.latest_rul ?? Infinity) <= 20000 ? "Critical" : (asset.latest_rul ?? Infinity) <= 60000 ? "Warning" : "Healthy"}
-                                </Badge>
-                              </td>
-                              <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{asset.latest_prediction_timestamp ? new Date(asset.latest_prediction_timestamp).toLocaleString() : 'N/A'}</td>
-                            </tr>
+                    <p className="mt-1 text-orange-600">
+                      {droppedRowCount > 0 && `${droppedRowCount} row(s) were dropped due to errors. `}
+                      {skippedSequenceCount > 0 && `${skippedSequenceCount} sequence(s) could not be formed. `}
+                      {validationWarnings.length > 0 && `Encountered ${validationWarnings.length} warning(s).`}
+                    </p>
+                    
+                    {showValidationDetails && validationWarnings.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-orange-200">
+                        <p className="text-xs text-orange-600 mb-1">
+                          Displaying all {validationWarnings.length} warning(s):
+                        </p>
+                        <ul className="list-disc list-inside space-y-1 max-h-48 overflow-y-auto text-xs text-orange-500 bg-white p-2 rounded border border-orange-100">
+                          {validationWarnings.map((warning, index) => (
+                            <li key={index}>{warning}</li>
                           ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="text-center py-12 text-slate-400">No assets found.</div>
-                  )}
-                </CardContent>
-              </Card>
-            </TabsContent>
+                        </ul>
+                      </div>
+                    )}
+                    {!showValidationDetails && validationWarnings.length > 0 && (
+                       <p className="mt-1 text-xs text-orange-500">
+                         {validationWarnings.slice(0, 2).map((warning, index) => (
+                            <span key={index} className="block truncate">{warning}</span>
+                         ))}
+                         {validationWarnings.length > 2 && `... and ${validationWarnings.length - 2} more. Click "Show Details" to see all.`}
+                       </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-            <TabsContent value="insights">
-              <Card className="border-0 shadow-xl bg-[#FFFFFF] rounded-xl overflow-hidden border border-[#F7F7F7]">
+            {/* Simulation Results Card - Displayed when simulationResults exist */}
+            {simulationResults && simulationResults.length > 0 && (
+              <Card className="bg-white rounded-xl shadow-sm border-0">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-[#333333]">
-                    <TrendingUp className="h-5 w-5 text-[#E0D9FF]" />
-                    Advanced Insights & Trends
+                  <CardTitle className="text-xl font-semibold flex items-center">
+                    <BarChart3 className="h-5 w-5 mr-2 text-green-600" />
+                    Simulation Results
                   </CardTitle>
-                  <CardDescription className="text-[#8A8A8A]">
-                    Deeper analysis of asset performance and predictive maintenance trends.
+                  <CardDescription>
+                    Predicted RUL values from the simulation. Displaying the latest {Math.min(50, simulationResults.length)} results.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-[#8A8A8A] py-8 text-center">Insights and trend analysis features are under development. Check back soon!</p>
+                  <div className="h-[400px]"> 
+                    <RealTimeProgressChart data={simulationResults.slice(-50)} isProcessing={isProcessing} />
+                  </div>
+                  {/* Add Export Full Data button here later */}
                 </CardContent>
               </Card>
-            </TabsContent>
-          </Tabs>
-        </motion.div>
+            )}
+          </div>
+
+          {/* Right Column - Quick Stats & Recent Activity */}
+          <div className="space-y-6">
+            <Card className="bg-gradient-to-br from-blue-500 to-purple-600 text-white rounded-xl shadow-lg border-0">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold">Quick Stats</CardTitle>
+                <CardDescription className="text-blue-100">Fleet health at a glance</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between p-3 bg-white/10 rounded-lg">
+                  <div>
+                    <p className="text-sm text-blue-200">Average RUL</p>
+                    <p className="text-2xl font-bold">{avgRul.toLocaleString()}</p>
+                  </div>
+                  <TrendingUp className="h-6 w-6 text-blue-200" />
+                </div>
+                <div className="flex items-center justify-between p-3 bg-white/10 rounded-lg">
+                  <div>
+                    <p className="text-sm text-blue-200">Total Assets</p>
+                    <p className="text-2xl font-bold">{totalAssets}</p>
+                  </div>
+                  <Database className="h-6 w-6 text-blue-200" />
+                </div>
+                {/* <div className="flex items-center justify-between p-3 bg-white/10 rounded-lg">
+                  <div>
+                    <p className="text-sm text-blue-200">New Alerts</p>
+                    <p className="text-2xl font-bold">7</p> 
+                  </div>
+                  <Bell className="h-6 w-6 text-blue-200" />
+                </div> */}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white rounded-xl shadow-sm border-0">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold">Recent Activity</CardTitle>
+                <CardDescription>Latest asset updates ({totalAssets} total)</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  {assets && assets.slice(0, 4).map((asset) => (
+                    <div
+                      key={asset.id}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 cursor-pointer"
+                      onClick={() => navigate(`/assets/${asset.id}`)} // Added navigation
+                    >
+                      <Avatar className="h-9 w-9">
+                        {/* <AvatarImage src={asset.avatarUrl || undefined} alt={asset.name} /> */}
+                        <AvatarFallback className="bg-gray-200 text-gray-600 text-xs">
+                          {asset.name ? asset.name.substring(0, 2).toUpperCase() : String(asset.id).substring(0,2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-grow">
+                        <p className="text-sm font-medium text-gray-800">{asset.name || `Asset ${String(asset.id).substring(0,6)}...`}</p>
+                        <p className="text-xs text-gray-500">ID: {String(asset.id).substring(0, 8)}...</p>
+                      </div>
+                      <div className="text-right">
+                        <p className={`text-sm font-semibold ${asset.latest_rul && asset.latest_rul <= 20000 ? 'text-red-600' : asset.latest_rul && asset.latest_rul <= 60000 ? 'text-yellow-600' : 'text-green-600'}`}>
+                          {asset.latest_rul ? asset.latest_rul.toLocaleString() : 'N/A'}
+                        </p>
+                        <p className="text-xs text-gray-400">RUL</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
       </div>
     </div>
   );
