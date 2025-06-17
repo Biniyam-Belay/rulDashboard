@@ -500,14 +500,80 @@ app.post('/assets/:id/predict_rul_bulk_fast', async (req, res) => {
 // Endpoint to get all assets with their latest RUL
 app.get('/assets_with_latest_rul', async (req, res) => {
     try {
-        const { data, error } = await supabase.rpc('get_assets_with_latest_rul');
+        // First, get all assets
+        const { data: assets, error: assetsError } = await supabase
+            .from('assets')
+            .select(`
+                id,
+                name,
+                asset_type,
+                description,
+                location,
+                purchase_date,
+                initial_cost,
+                operational_status,
+                created_at
+            `)
+            .order('created_at', { ascending: false });
 
-        if (error) {
-            console.error('Supabase error fetching assets with latest RUL:', error);
-            return res.status(500).json({ error: error.message });
+        if (assetsError) {
+            console.error('Error fetching assets:', assetsError);
+            return res.status(500).json({ error: 'Failed to fetch assets' });
         }
 
-        res.json(data);
+        if (!assets || assets.length === 0) {
+            return res.json([]);
+        }
+
+        const assetIds = assets.map(asset => asset.id);
+
+        // Get the latest RUL prediction for each asset by querying the new view
+        // Ensure the view 'latest_asset_ruls' exists in your Supabase database
+        // CREATE OR REPLACE VIEW latest_asset_ruls AS
+        // SELECT DISTINCT ON (asset_id)
+        //     asset_id,
+        //     predicted_rul AS latest_rul,
+        //     prediction_timestamp AS latest_rul_timestamp
+        // FROM
+        //     rul_predictions
+        // ORDER BY
+        //     asset_id, prediction_timestamp DESC;
+        const { data: latestRulsData, error: rulsError } = await supabase
+            .from('latest_asset_ruls') // Query the 'latest_asset_ruls' view
+            .select('asset_id, latest_rul, latest_rul_timestamp')
+            .in('asset_id', assetIds);
+
+        if (rulsError) {
+            console.error('Error fetching RUL predictions from view latest_asset_ruls:', rulsError);
+            // Fallback or error response: Return assets without RUL data
+            const assetsWithoutRul = assets.map(asset => ({
+                ...asset,
+                latest_rul: null,
+                latest_rul_timestamp: null,
+            }));
+            return res.json(assetsWithoutRul);
+        }
+
+        const latestRulMap = new Map();
+        if (latestRulsData) {
+            for (const r of latestRulsData) {
+                latestRulMap.set(r.asset_id, {
+                    rul: r.latest_rul,
+                    timestamp: r.latest_rul_timestamp,
+                });
+            }
+        }
+
+        const assetsWithLatestRul = assets.map(asset => {
+            const latestRulEntry = latestRulMap.get(asset.id);
+            return {
+                ...asset,
+                latest_rul: latestRulEntry?.rul ?? null,
+                latest_rul_timestamp: latestRulEntry?.timestamp ?? null,
+            };
+        });
+
+        res.json(assetsWithLatestRul);
     } catch (error) {
         console.error('Error in /assets_with_latest_rul endpoint:', error.message);
         res.status(500).json({ error: 'Internal server error.' });

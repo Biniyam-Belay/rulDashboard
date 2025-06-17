@@ -1,0 +1,28 @@
+project_id = "your-project-id"
+
+[api]
+port = 54321
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+
+[studio]
+port = 54323
+
+[inbucket]
+port = 54324
+
+[storage]
+port = 54325
+
+[auth]
+port = 54326
+
+[edge_runtime]
+port = 54327
+
+[functions.assets-with-latest-rul]
+verify_jwt = false

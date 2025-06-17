@@ -8,14 +8,19 @@ from tensorflow.keras.models import load_model
 import os
 import time
 import sys
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
 # Load model and scalers at startup
 MODEL_DIR = os.path.dirname(__file__)
-MODEL_PATH = os.path.join(MODEL_DIR, "june14cnnlstm_model_full_pipeline_206.keras")
-FEATURE_SCALER_PATH = os.path.join(MODEL_DIR, "june14feature_scaler_full_pipeline_206.gz")
-RUL_SCALER_PATH = os.path.join(MODEL_DIR, "june14rul_scaler_full_pipeline_206.gz")
+MODEL_PATH = os.path.join(MODEL_DIR, "june15cnnlstm_model_full_pipeline_206.keras")
+FEATURE_SCALER_PATH = os.path.join(MODEL_DIR, "june15feature_scaler_full_pipeline_206.gz")
+RUL_SCALER_PATH = os.path.join(MODEL_DIR, "june15rul_scaler_full_pipeline_206.gz")
 
 model = None
 feature_scaler = None
@@ -237,10 +242,19 @@ async def predict_rul(request_data: PredictionRequest):
         
         # Make prediction
         scaled_prediction = model.predict(model_input) # Shape: (1, 1) or (1,)
+        logger.debug(f"Raw scaled prediction: {scaled_prediction}")
         
-        # Inverse transform the prediction
+        # Inverse transform the prediction (gives us revolutions)
         # RUL scaler expects a 2D array, e.g., [[value]]
-        predicted_rul = rul_scaler.inverse_transform(scaled_prediction.reshape(-1, 1))[0,0]
+        predicted_rul_revolutions = rul_scaler.inverse_transform(scaled_prediction.reshape(-1, 1))[0,0]
+        logger.debug(f"Inverse transformed RUL (revolutions): {predicted_rul_revolutions}")
+        
+        # Convert from revolutions to hours using the training mapping:
+        # 3,398,400 revolutions = 128 hours (from the run-to-failure dataset)
+        MAX_REVOLUTIONS = 3398400.0
+        MAX_HOURS = 128.0
+        predicted_rul = (predicted_rul_revolutions / MAX_REVOLUTIONS) * MAX_HOURS
+        logger.debug(f"Converted RUL (hours): {predicted_rul}")
         
         return PredictionResponse(predicted_rul=float(predicted_rul))
 
@@ -290,8 +304,14 @@ async def predict_rul_bulk(request_data: BulkPredictionRequest):
             # Single model prediction call for entire batch
             scaled_predictions = model.predict(model_input, verbose=0) # Shape: (batch_size, 1)
             
-            # Vectorized inverse transform
-            predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten();
+            # Vectorized inverse transform (gives us revolutions)
+            predicted_ruls_revolutions = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+            
+            # Convert from revolutions to hours using the training mapping:
+            # 3,398,400 revolutions = 128 hours (from the run-to-failure dataset)
+            MAX_REVOLUTIONS = 3398400.0
+            MAX_HOURS = 128.0
+            predicted_ruls = (predicted_ruls_revolutions / MAX_REVOLUTIONS) * MAX_HOURS
             
             # Create response objects
             valid_predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]
@@ -345,8 +365,20 @@ async def predict_rul_bulk_fast(request_data: BulkPredictionRequest):
         # Single vectorized model prediction
         scaled_predictions = model.predict(model_input, verbose=0)  # Shape: (batch_size, 1)
         
-        # Vectorized inverse transform
-        predicted_ruls = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten();
+        # Vectorized inverse transform (gives us revolutions)
+        predicted_ruls_revolutions = rul_scaler.inverse_transform(scaled_predictions.reshape(-1, 1)).flatten()
+        
+        # Convert from revolutions to hours using the training mapping:
+        # 3,398,400 revolutions = 128 hours (from the run-to-failure dataset)
+        MAX_REVOLUTIONS = 3398400.0
+        MAX_HOURS = 128.0
+        predicted_ruls = (predicted_ruls_revolutions / MAX_REVOLUTIONS) * MAX_HOURS
+        
+        # Debug: Print both revolutions and hours
+        logger.debug(f"Predicted RULs (revolutions): min={predicted_ruls_revolutions.min():.1f}, max={predicted_ruls_revolutions.max():.1f}, mean={predicted_ruls_revolutions.mean():.1f}")
+        logger.debug(f"Predicted RULs (hours): min={predicted_ruls.min():.1f}, max={predicted_ruls.max():.1f}, mean={predicted_ruls.mean():.1f}")
+        logger.debug(f"First 5 RULs (hours): {predicted_ruls[:5]}")
+        logger.debug(f"Last 5 RULs (hours): {predicted_ruls[-5:]}")
         
         # Create response objects
         predictions = [PredictionResponse(predicted_rul=float(rul)) for rul in predicted_ruls]

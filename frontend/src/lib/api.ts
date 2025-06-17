@@ -5,7 +5,8 @@ import {
 } from '@tanstack/react-query';
 import type { Asset, AssetWithLatestRul, RulPrediction, SensorHistoryRecord, Alert, ModelPerformanceMetrics, ActualVsPredictedRul, DataDriftReport } from './types';
 
-const API_BASE_URL = 'http://localhost:3001'; // Make sure this matches your backend API port
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
 
 // Interface for the raw API response for sensor history
 interface SensorHistoryApiResponseItem {
@@ -29,10 +30,35 @@ export function useAssetsWithLatestRul() {
   return useQuery<AssetWithLatestRul[]>({
     queryKey: ['assets_with_latest_rul'],
     queryFn: async (): Promise<AssetWithLatestRul[]> => {
-      const res = await fetch(`${API_BASE_URL}/assets_with_latest_rul`);
-      if (!res.ok) throw new Error('Failed to fetch assets with latest RUL');
-      return res.json();
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      try {
+        const res = await fetch(`${API_BASE_URL}/assets_with_latest_rul`, {
+          signal: controller.signal,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        clearTimeout(timeoutId);
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        return res.json();
+      } catch (error: any) { // Added type assertion for error
+        clearTimeout(timeoutId);
+        if (error instanceof Error && error.name === 'AbortError') { // More specific error check
+          throw new Error('Request timed out after 30 seconds');
+        }
+        throw error;
+      }
     },
+    retry: 1,
+    retryDelay: 2000,
+    staleTime: 30000, // Cache for 30 seconds
+    gcTime: 300000, // Keep in cache for 5 minutes
   });
 }
 
