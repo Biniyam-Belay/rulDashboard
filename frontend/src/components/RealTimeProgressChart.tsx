@@ -7,9 +7,9 @@ import {
   ResponsiveContainer, 
   ReferenceLine,
   Legend,
-  Area,
   ComposedChart,
-  Line
+  Line,
+  Area,
 } from 'recharts';
 
 interface RealTimeProgressChartProps {
@@ -19,55 +19,169 @@ interface RealTimeProgressChartProps {
     timestamp: string;
   }>;
   isProcessing: boolean;
+  displayBatchSize?: number; // Added new optional prop
 }
 
-const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isProcessing }) => {
-  // Calculate trend and statistics
+const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isProcessing, displayBatchSize }) => {
+  // Enhanced chart data with degradation analysis
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
     
-    return data.map((item, index) => ({
-      ...item,
-      index: index + 1,
-      trend: index > 0 ? data[index].predictedRul - data[index - 1].predictedRul : 0,
-      movingAvg: index >= 4 ? 
-        data.slice(Math.max(0, index - 4), index + 1)
-          .reduce((sum, d) => sum + d.predictedRul, 0) / Math.min(5, index + 1) : 
-        item.predictedRul,
-    }));
-  }, [data]);
+    let processedData = [...data].sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+
+    // If displayBatchSize is provided and positive, take only the last N items
+    if (displayBatchSize && displayBatchSize > 0 && processedData.length > displayBatchSize) {
+      processedData = processedData.slice(-displayBatchSize);
+    }
+    
+    return processedData.map((item, index, arr) => {
+      const prevItem = index > 0 ? arr[index - 1] : null;
+      const trend = prevItem ? item.predictedRul - prevItem.predictedRul : 0;
+      
+      // Define significant event thresholds
+      const SIGNIFICANT_DROP_THRESHOLD = -5000;
+      const SIGNIFICANT_PEAK_THRESHOLD = 5000;
+      let significantEvent: 'peak' | 'drop' | null = null;
+      if (trend < SIGNIFICANT_DROP_THRESHOLD) {
+        significantEvent = 'drop';
+      } else if (trend > SIGNIFICANT_PEAK_THRESHOLD) {
+        significantEvent = 'peak';
+      }
+
+      const windowSize = Math.min(5, index + 1);
+      const window = processedData.slice(Math.max(0, index - windowSize + 1), index + 1);
+      const movingAvg = window.reduce((sum, d) => sum + d.predictedRul, 0) / window.length;
+      
+      const slopeWindowSize = Math.min(10, index + 1);
+      let degradationRate = 0;
+      if (index >= slopeWindowSize - 1) {
+        const slopeWindow = processedData.slice(index - slopeWindowSize + 1, index + 1);
+        const firstVal = slopeWindow[0].predictedRul;
+        const lastVal = slopeWindow[slopeWindow.length - 1].predictedRul;
+        degradationRate = (lastVal - firstVal) / slopeWindowSize;
+      }
+      
+      let healthStatus = 'healthy';
+      if (item.predictedRul <= 20000) {
+        healthStatus = 'critical';
+      } else if (item.predictedRul <= 60000) {
+        healthStatus = 'warning';
+      } else if (degradationRate < -1000) {
+        healthStatus = 'declining';
+      }
+      
+      return {
+        ...item, // Includes original sequenceNumber, predictedRul, timestamp
+        // index: index + 1, // Replaced by using sequenceNumber directly for XAxis
+        trend,
+        movingAvg,
+        degradationRate,
+        healthStatus,
+        daysRemaining: item.predictedRul / 24,
+        confidence: index >= 4 ? Math.max(0.3, 1 - Math.abs(trend) / (item.predictedRul * 0.1)) : 0.5,
+        significantEvent, // Added significantEvent
+      };
+    });
+  }, [data, displayBatchSize]);
+
+  const yDomain = useMemo(() => {
+    if (!chartData || chartData.length === 0) {
+      return { min: 'auto' as const, max: 'auto' as const };
+    }
+
+    const rulValues = chartData.map(d => d.predictedRul);
+    let minRul = Math.min(...rulValues);
+    let maxRul = Math.max(...rulValues);
+
+    if (minRul === maxRul) {
+      const paddingAmount = 1000;
+      minRul -= paddingAmount;
+      maxRul += paddingAmount;
+    } else {
+      const range = maxRul - minRul;
+      const padding = Math.max(range * 0.05, 500);
+      minRul -= padding;
+      maxRul += padding;
+    }
+    
+    minRul = Math.max(0, minRul);
+
+    return { min: Math.floor(minRul), max: Math.ceil(maxRul) };
+  }, [chartData]);
 
   const stats = useMemo(() => {
-    if (data.length === 0) return { min: 0, max: 0, avg: 0, latest: 0 };
+    if (data.length === 0) return { min: 0, max: 0, avg: 0, latest: 0, totalDegradation: 0, avgDegradationRate: 0 };
     
     const values = data.map(d => d.predictedRul);
+    const latest = values[values.length - 1] || 0;
+    const first = values[0] || latest;
+    const totalDegradation = first - latest;
+    const avgDegradationRate = data.length > 1 ? totalDegradation / (data.length - 1) : 0;
+    
     return {
       min: Math.min(...values),
       max: Math.max(...values),
       avg: values.reduce((sum, val) => sum + val, 0) / values.length,
-      latest: values[values.length - 1] || 0
+      latest,
+      totalDegradation,
+      avgDegradationRate
     };
   }, [data]);
 
-  // Custom tooltip with enhanced information
+  // Enhanced tooltip with degradation insights
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (!active || !payload || !payload.length) return null;
-    const data = payload[0].payload;
-    const value = payload[0].value;
+    const tooltipData = payload[0].payload; // Renamed to avoid conflict with props.data
+    const rulValue = payload.find((p: any) => p.dataKey === 'predictedRul')?.value;
+    
     return (
-      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-3">
-        <p className="font-semibold text-gray-700">{`Sequence ${label}`}</p>
-        <p className="text-gray-800">
-          <span className="font-medium">RUL:</span> {value.toFixed(1)} cycles
-        </p>
-        {data.trend !== 0 && (
-          <p className={`text-sm ${data.trend > 0 ? 'text-green-500' : 'text-red-500'}`}> 
-            <span className="font-medium">Trend:</span> {data.trend > 0 ? '+' : ''}{data.trend.toFixed(1)} cycles
-          </p>
-        )}
-        <p className="text-xs text-gray-500">
-          {new Date(data.timestamp).toLocaleTimeString()}
-        </p>
+      <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-4 min-w-[200px]">
+        <p className="font-semibold text-gray-800 mb-2">{`Sequence ${label}`}</p> {/* label is sequenceNumber */}
+        
+        <div className="space-y-1 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-600">RUL:</span>
+            <span className="font-medium text-gray-900">{rulValue?.toFixed(0)} hours</span>
+          </div>
+          
+          <div className="flex justify-between">
+            <span className="text-gray-600">Days Left:</span>
+            <span className="font-medium text-gray-900">{tooltipData.daysRemaining?.toFixed(1)} days</span>
+          </div>
+          
+          {tooltipData.trend !== 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-600">Change:</span>
+              <span className={`font-medium ${tooltipData.trend > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {tooltipData.trend > 0 ? '+' : ''}{tooltipData.trend.toFixed(0)} hrs
+              </span>
+            </div>
+          )}
+          
+          {Math.abs(tooltipData.degradationRate) > 10 && (
+            <div className="flex justify-between">
+              <span className="text-gray-600">Degradation:</span>
+              <span className={`font-medium ${tooltipData.degradationRate < -100 ? 'text-red-600' : 'text-yellow-600'}`}>
+                {tooltipData.degradationRate.toFixed(0)} hrs/seq
+              </span>
+            </div>
+          )}
+          
+          <div className="flex justify-between">
+            <span className="text-gray-600">Status:</span>
+            <span className={`font-medium capitalize ${
+              tooltipData.healthStatus === 'critical' ? 'text-red-600' :
+              tooltipData.healthStatus === 'warning' ? 'text-yellow-600' :
+              tooltipData.healthStatus === 'declining' ? 'text-orange-600' : 'text-green-600'
+            }`}>
+              {tooltipData.healthStatus}
+            </span>
+          </div>
+        </div>
+        
+        <div className="text-xs text-gray-500 mt-2 pt-2 border-t">
+          {new Date(tooltipData.timestamp).toLocaleString()}
+        </div>
       </div>
     );
   };
@@ -90,128 +204,133 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
 
   return (
     <div className="w-full h-full">
-      {/* Statistics Header */}
-      <div className="grid grid-cols-4 gap-4 mb-6 text-center">
-        <div className="bg-blue-50 rounded-lg p-3">
-          <p className="text-xs font-medium text-blue-700 uppercase tracking-wider">Latest</p>
-          <p className="text-lg font-bold text-blue-900">{stats.latest.toFixed(0)}</p>
-          <p className="text-xs text-blue-600">cycles</p>
+      {/* Reimagined Statistics Header */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6 text-center">
+        <div className="bg-indigo-50 rounded-xl p-4">
+          <p className="text-sm font-semibold text-indigo-600 uppercase tracking-wider">Current RUL</p>
+          <p className="text-2xl font-bold text-indigo-900 mt-1">{stats.latest.toFixed(0)}</p>
+          <p className="text-xs text-indigo-500">{(stats.latest/24).toFixed(1)} days</p>
         </div>
-        <div className="bg-green-50 rounded-lg p-3">
-          <p className="text-xs font-medium text-green-700 uppercase tracking-wider">Average</p>
-          <p className="text-lg font-bold text-green-900">{stats.avg.toFixed(0)}</p>
-          <p className="text-xs text-green-600">cycles</p>
+        
+        <div className="bg-pink-50 rounded-xl p-4">
+          <p className="text-sm font-semibold text-pink-600 uppercase tracking-wider">Total Loss</p>
+          <p className="text-2xl font-bold text-pink-900 mt-1">{Math.abs(stats.totalDegradation).toFixed(0)}</p>
+          <p className="text-xs text-pink-500">hours degraded</p>
         </div>
-        <div className="bg-purple-50 rounded-lg p-3">
-          <p className="text-xs font-medium text-purple-700 uppercase tracking-wider">Maximum</p>
-          <p className="text-lg font-bold text-purple-900">{stats.max.toFixed(0)}</p>
-          <p className="text-xs text-purple-600">cycles</p>
+        
+        <div className="bg-teal-50 rounded-xl p-4">
+          <p className="text-sm font-semibold text-teal-600 uppercase tracking-wider">Range</p>
+          <p className="text-2xl font-bold text-teal-900 mt-1">{(stats.max - stats.min).toFixed(0)}</p>
+          <p className="text-xs text-teal-500">hours span</p>
         </div>
-        <div className="bg-yellow-50 rounded-lg p-3">
-          <p className="text-xs font-medium text-yellow-700 uppercase tracking-wider">Minimum</p>
-          <p className="text-lg font-bold text-yellow-900">{stats.min.toFixed(0)}</p>
-          <p className="text-xs text-yellow-600">cycles</p>
+        
+        <div className={`rounded-xl p-4 ${
+          Math.abs(stats.avgDegradationRate) > 500 ? 'bg-red-100' : 
+          Math.abs(stats.avgDegradationRate) > 100 ? 'bg-amber-100' : 'bg-green-100'
+        }`}>
+          <p className={`text-sm font-semibold uppercase tracking-wider ${
+            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-600' : 
+            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-600' : 'text-green-600'
+          }`}>Avg Rate</p>
+          <p className={`text-2xl font-bold mt-1 ${
+            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-900' : 
+            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-900' : 'text-green-900'
+          }`}>{stats.avgDegradationRate.toFixed(0)}</p>
+          <p className={`text-xs ${
+            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-500' : 
+            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-500' : 'text-green-500'
+          }`}>hrs/sequence</p>
         </div>
       </div>
 
-      {/* Enhanced Chart */}
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e0e0e0" strokeOpacity={0.8} />
-          <XAxis 
-            dataKey="index"
-            stroke="#9ca3af"
-            fontSize={11}
-            tick={{ fill: '#6b7280' }}
-            axisLine={{ stroke: '#d1d5db', strokeWidth: 1 }}
-            tickLine={{ stroke: '#d1d5db' }}
-          />
-          <YAxis 
-            stroke="#9ca3af"
-            fontSize={11}
-            tick={{ fill: '#6b7280' }}
-            axisLine={{ stroke: '#d1d5db', strokeWidth: 1 }}
-            tickLine={{ stroke: '#d1d5db' }}
-            domain={['dataMin - 1000', 'dataMax + 1000']}
-          />
-          {/* Critical thresholds */}
-          <ReferenceLine 
-            y={20000} 
-            stroke="#f59e0b" // Amber color for critical
-            strokeDasharray="5 5"
-            strokeWidth={1.5}
-            label={{ value: "Critical (20k)", position: "insideTopRight", style: { fill: '#f59e0b', fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,255,255,0.7)', padding: '2px 4px', borderRadius: '2px'} }}
-          />
-          <ReferenceLine 
-            y={60000} 
-            stroke="#6366f1" // Indigo color for warning
-            strokeDasharray="5 5" 
-            strokeWidth={1.5}
-            label={{ value: "Warning (60k)", position: "insideTopRight", style: { fill: '#6366f1', fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,255,255,0.7)', padding: '2px 4px', borderRadius: '2px'} }}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend wrapperStyle={{ fontSize: '12px' }} />
-          {/* Area under the curve for visual appeal */}
-          <Area
-            type="monotone"
-            dataKey="predictedRul"
-            stroke="none"
-            fill="url(#rulGradient)" // Using a gradient fill
-            fillOpacity={0.4}
-          />
-          {/* Main RUL line */}
-          <Line 
-            type="monotone" 
-            dataKey="predictedRul" 
-            stroke="url(#rulGradient)" // Using a gradient for the line stroke
-            strokeWidth={2.5}
-            dot={{ 
-              fill: '#3b82f6', // Blue color for dots
-              strokeWidth: 1, 
-              stroke: '#ffffff',
-              r: 3 
-            }}
-            activeDot={{ 
-              r: 6, 
-              stroke: '#2563eb', // Darker blue for active dot
-              strokeWidth: 1,
-              fill: '#ffffff'
-            }}
-            name="Predicted RUL"
-          />
-           {/* Moving average line */}
-          <Line 
-            type="monotone" 
-            dataKey="movingAvg" 
-            stroke="#10b981" // Emerald color for moving average
-            strokeWidth={2}
-            dot={false}
-            activeDot={false}
-            name="Moving Avg (5-seq)"
-          />
-          {/* Processing indicator */}
-          {isProcessing && data.length > 0 && (
-            <ReferenceLine 
-              x={data.length} 
-              stroke="#0ea5e9" // Sky color for processing indicator
-              strokeWidth={2}
-              strokeDasharray="8 4"
-              label={{ 
-                value: "Processing...", 
-                position: "top",
-                style: { fill: '#0ea5e9', fontSize: '10px', fontWeight: 'bold', background: 'rgba(255,255,255,0.7)', padding: '2px 4px', borderRadius: '2px' }
-              }}
+      {/* Reimagined Chart */}
+      <div style={{ width: '100%', height: '380px' }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 20, right: 40, left: 20, bottom: 80 }}>
+            <defs>
+              <linearGradient id="rulGradient" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.7}/>
+                <stop offset="95%" stopColor="#c7d2fe" stopOpacity={0.1}/>
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <XAxis 
+              dataKey="sequenceNumber"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              allowDuplicatedCategory={false}
+              stroke="#6b7280"
+              fontSize={12}
+              tick={{ fill: '#6b7280' }}
+              axisLine={{ stroke: '#d1d5db' }}
+              tickLine={{ stroke: '#d1d5db' }}
+              label={{ value: 'Sequence Number', position: 'insideBottom', offset: -25, style: { fontSize: '14px', fill: '#374151', fontWeight: '600' } }}
             />
-          )}
-          {/* Gradient definition */}
-          <defs>
-            <linearGradient id="rulGradient" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-              <stop offset="95%" stopColor="#1d4ed8" stopOpacity={0.5}/>
-            </linearGradient>
-          </defs>
-        </ComposedChart>
-      </ResponsiveContainer>
+            <YAxis 
+              stroke="#6b7280"
+              fontSize={12}
+              tick={{ fill: '#6b7280' }}
+              axisLine={{ stroke: '#d1d5db' }}
+              tickLine={{ stroke: '#d1d5db' }}
+              domain={[yDomain.min, yDomain.max]}
+              allowDataOverflow={false}
+              label={{ value: 'Predicted RUL (hrs)', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: '14px', fill: '#374151', fontWeight: '600' } }}
+              tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0)}
+            />
+            <ReferenceLine y={20000} stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5}
+              label={{ value: "CRITICAL", position: "insideTopRight", style: { fill: '#ef4444', fontSize: '10px', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.8)', padding: '2px 4px', borderRadius: '2px' } }}
+            />
+            <ReferenceLine y={60000} stroke="#f97316" strokeDasharray="6 3" strokeWidth={1.5}
+              label={{ value: "WARNING", position: "insideTopRight", style: { fill: '#f97316', fontSize: '10px', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.8)', padding: '2px 4px', borderRadius: '2px' } }}
+            />
+            <Tooltip content={<CustomTooltip />} wrapperStyle={{ outline: 'none', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' }} cursor={{ stroke: '#4f46e5', strokeWidth: 1, strokeDasharray: '3 3' }} />
+            <Legend 
+              iconType="line" 
+              wrapperStyle={{ 
+                fontSize: '13px', 
+                paddingTop: 35,
+                paddingBottom: 0,
+                display: 'flex',
+                justifyContent: 'left',
+                gap: '20px'
+              }} 
+              verticalAlign="bottom" 
+              height={40}
+              layout="horizontal"
+            />
+            <Area
+              type="monotone"
+              dataKey="predictedRul"
+              name="Predicted RUL"
+              stroke="#4f46e5"
+              strokeWidth={2.5}
+              fill="url(#rulGradient)"
+              fillOpacity={1}
+              activeDot={{ r: 7, strokeWidth: 2, fill: '#fff' }}
+              isAnimationActive={true}
+            />
+            <Line 
+              type="monotone" 
+              dataKey="movingAvg" 
+              name="5-Point Moving Average"
+              stroke="#10b981"
+              strokeWidth={2}
+              dot={false}
+              strokeDasharray="4 4"
+              isAnimationActive={true}
+            />
+            {isProcessing && chartData.length > 0 && chartData[chartData.length - 1]?.sequenceNumber != null && (
+              <ReferenceLine 
+                x={chartData[chartData.length - 1].sequenceNumber}
+                stroke="#2563eb"
+                strokeWidth={2}
+                strokeDasharray="8 4"
+                label={{ value: "LIVE", position: "top", style: { fill: '#fff', backgroundColor: '#2563eb', padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' } }}
+              />
+            )}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 };
