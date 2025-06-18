@@ -1,13 +1,15 @@
 "use client"
 
-import type React from "react"
-import { useState, useMemo } from "react"
+
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import {
-  BarChart3, Bell, Settings, Search, Upload, Database, AlertTriangle, CheckCircle, PlayCircle, StopCircle, Clock, TrendingUp, ChevronDown, ChevronUp, Calculator, Download, Loader2
+  BarChart3, Bell, Settings, Search, AlertTriangle, CheckCircle, Clock, TrendingUp, Calculator, Loader2, Upload, Play, Square, Download, ChevronDown, ChevronUp
 } from 'lucide-react'
+import Papa from 'papaparse'
+import { predictRulForAsset, predictRulForAssetBulk, predictRulForAssetBulkFast } from "@/lib/api"
 
-import Papa from 'papaparse';
+
 import {
   Card,
   CardContent,
@@ -16,12 +18,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import RealTimeProgressChart from "./RealTimeProgressChart";
-import { useAssetsWithLatestRul, predictRulForAssetBulkFast, predictRulForAssetBulk } from "@/lib/api";
+
+import { useAssetsWithLatestRul } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import RealTimeProgressChart from "./RealTimeProgressChart";
+
 
 const DashboardPage = () => {
   // Fetch real asset data
@@ -50,6 +56,58 @@ const DashboardPage = () => {
     return rulRealHours;
   };
 
+  // Smart RUL formatting function - displays in most appropriate time unit
+  const formatRulDisplay = (rulHours: number | null | undefined): { value: string; unit: string; fullText: string } => {
+    if (rulHours === null || rulHours === undefined || rulHours <= 0) {
+      return { value: 'N/A', unit: '', fullText: 'N/A' };
+    }
+
+    // Convert to different time units
+    const hours = rulHours;
+    const days = hours / operatingHoursPerDay;
+    const weeks = days / 7;
+    const months = days / 30.44; // Average days per month
+    const years = days / 365.25; // Account for leap years
+
+    // Choose the most appropriate unit based on value ranges
+    if (hours < 48) {
+      // Less than 2 days: show in hours
+      return {
+        value: Math.round(hours).toLocaleString(),
+        unit: hours === 1 ? 'hr' : 'hrs',
+        fullText: `${Math.round(hours).toLocaleString()} ${hours === 1 ? 'hour' : 'hours'}`
+      };
+    } else if (days < 14) {
+      // Less than 2 weeks: show in days
+      return {
+        value: days.toFixed(1),
+        unit: Math.round(days) === 1 ? 'day' : 'days',
+        fullText: `${days.toFixed(1)} ${Math.round(days) === 1 ? 'day' : 'days'}`
+      };
+    } else if (weeks < 8) {
+      // Less than 2 months: show in weeks
+      return {
+        value: weeks.toFixed(1),
+        unit: Math.round(weeks) === 1 ? 'wk' : 'wks',
+        fullText: `${weeks.toFixed(1)} ${Math.round(weeks) === 1 ? 'week' : 'weeks'}`
+      };
+    } else if (months < 24) {
+      // Less than 2 years: show in months
+      return {
+        value: months.toFixed(1),
+        unit: Math.round(months) === 1 ? 'mo' : 'mos',
+        fullText: `${months.toFixed(1)} ${Math.round(months) === 1 ? 'month' : 'months'}`
+      };
+    } else {
+      // 2+ years: show in years
+      return {
+        value: years.toFixed(1),
+        unit: Math.round(years) === 1 ? 'yr' : 'yrs',
+        fullText: `${years.toFixed(1)} ${Math.round(years) === 1 ? 'year' : 'years'}`
+      };
+    }
+  };
+
   // Calculate KPIs based on fetched data with real-world RUL adjustments
   const totalAssets = assets?.length ?? 0;
   
@@ -68,7 +126,6 @@ const DashboardPage = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [parsedData, setParsedData] = useState<any[] | null>(null);
-  const [headerRow, setHeaderRow] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [assetIdForSim, setAssetIdForSim] = useState<string>('');
@@ -79,15 +136,15 @@ const DashboardPage = () => {
     timestamp: string;
     error?: string;
   }>>([]);
-  const [currentSequence, setCurrentSequence] = useState(0);
   const [simulationAbortController, setSimulationAbortController] = useState<AbortController | null>(null);
-  const [batchSize, setBatchSize] = useState(30);
   const [processingMode, setProcessingMode] = useState<'fast' | 'standard'>('fast');
   const [processingStartTime, setProcessingStartTime] = useState<number | null>(null);
   const [droppedRowCount, setDroppedRowCount] = useState<number>(0);
-  const [skippedSequenceCount, setSkippedSequenceCount] = useState<number>(0);
   const [validationWarnings, setValidationWarnings] = useState<string[]>([]);
+  const [batchSize, setBatchSize] = useState(30);
+  const [advancedMode, setAdvancedMode] = useState(false);
   const [showValidationDetails, setShowValidationDetails] = useState<boolean>(false);
+  const [showRealTimeChart, setShowRealTimeChart] = useState<boolean>(true);
 
   const SEQUENCE_LENGTH = 50;
 
@@ -207,6 +264,233 @@ const DashboardPage = () => {
     URL.revokeObjectURL(url);
   };
 
+  // CSV file handling
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      setParsedData(null);
+      setUploadError(null);
+      setSimulationResults([]);
+    }
+  };
+
+  // Parse CSV file with comprehensive error handling
+  const handleParseCsv = async () => {
+    if (!selectedFile) {
+      setUploadError('Please select a CSV file first.');
+      return;
+    }
+
+    setIsParsing(true);
+    setUploadError(null);
+    setParsedData(null);
+    setSimulationProgressText('Parsing CSV...');
+
+    Papa.parse(selectedFile, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results: Papa.ParseResult<any>) => {
+        if (results.errors.length) {
+          setUploadError(`Error parsing CSV: ${results.errors.map((e: Papa.ParseError) => e.message).join(', ')}`);
+          setParsedData(null);
+          setSimulationProgressText('CSV parsing failed.');
+        } else {
+          // Filter out empty column headers
+          const validFields = (results.meta.fields || []).filter(field => field && field.trim() !== '');
+          
+          // Clean data by removing empty columns
+          const cleanData = results.data.map((row: any) => {
+            const cleanRow: any = {};
+            for (const key in row) {
+              if (key && key.trim() !== '') {
+                cleanRow[key.trim()] = row[key];
+              }
+            }
+            return cleanRow;
+          });
+
+          // Validate and transform data
+          const transformedData: any[] = [];
+          const warnings: string[] = [];
+          let droppedRows = 0;
+
+          cleanData.forEach((row: any, index: number) => {
+            const csvRowNumber = index + 2; // 1-based for file, +1 for header
+            const transformOutcome = transformRow(row, validFields, csvRowNumber);
+            if (transformOutcome.success) {
+              transformedData.push(transformOutcome.data);
+            } else {
+              droppedRows++;
+              if (transformOutcome.error) {
+                warnings.push(transformOutcome.error);
+              } else {
+                warnings.push(`Row ${csvRowNumber}: Dropped for an unspecified reason.`);
+              }
+            }
+          });
+
+          setDroppedRowCount(droppedRows);
+          setValidationWarnings(warnings);
+
+          if (transformedData.length === 0) {
+            setUploadError('No valid data rows after transformation. Check column headers and data format.');
+            setSimulationProgressText('CSV parsing failed - no valid data.');
+            setParsedData(null);
+          } else {
+            setParsedData(transformedData);
+            const numSequences = Math.floor(transformedData.length / SEQUENCE_LENGTH);
+            setSimulationProgressText(`CSV parsed successfully. ${transformedData.length} rows, ${numSequences} sequences available.`);
+            
+            if (transformedData.length < SEQUENCE_LENGTH) {
+              setUploadError(`Not enough valid data rows. Need at least ${SEQUENCE_LENGTH} rows, but only got ${transformedData.length}.`);
+            }
+          }
+        }
+        setIsParsing(false);
+      },
+      error: (err: any) => {
+        setUploadError(`Failed to parse CSV: ${err.message}`);
+        setIsParsing(false);
+        setParsedData(null);
+        setSimulationProgressText('CSV parsing failed.');
+      }
+    });
+  };
+
+  // Start RUL simulation with bulk processing
+  const handleStartSimulation = async () => {
+    if (!parsedData || parsedData.length < SEQUENCE_LENGTH) {
+      setUploadError(`Not enough data to form a sequence. Need at least ${SEQUENCE_LENGTH} rows.`);
+      return;
+    }
+    if (!assetIdForSim.trim()) {
+      setUploadError('Please enter an Asset ID for the simulation.');
+      return;
+    }
+
+    // Create new abort controller for this simulation
+    const abortController = new AbortController();
+    setSimulationAbortController(abortController);
+
+    setIsProcessing(true);
+    setUploadError(null);
+    setSimulationProgressText('Starting simulation...');
+    setSimulationResults([]);
+    setProcessingStartTime(Date.now());
+
+    const totalSequences = Math.floor(parsedData.length / SEQUENCE_LENGTH);
+    const batches = [];
+    
+    // Create batches for processing
+    for (let i = 0; i < totalSequences; i += batchSize) {
+      const batchEnd = Math.min(i + batchSize, totalSequences);
+      batches.push({ start: i, end: batchEnd });
+    }
+
+    try {
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        if (abortController.signal.aborted) {
+          setSimulationProgressText('Simulation stopped by user');
+          break;
+        }
+
+        const batch = batches[batchIndex];
+        setSimulationProgressText(`Processing batch ${batchIndex + 1} of ${batches.length} (sequences ${batch.start + 1}-${batch.end})...`);
+
+        // Prepare sequences for this batch
+        const sequencesForThisBatch: any[][] = [];
+        const metadataForThisBatch: Array<{ sequenceNumber: number }> = [];
+        
+        for (let seqIndex = batch.start; seqIndex < batch.end; seqIndex++) {
+          const sequenceStartIndex = seqIndex * SEQUENCE_LENGTH;
+          const sequenceData = parsedData.slice(sequenceStartIndex, sequenceStartIndex + SEQUENCE_LENGTH);
+          
+          if (sequenceData.length === SEQUENCE_LENGTH) {
+            sequencesForThisBatch.push(sequenceData);
+            metadataForThisBatch.push({ sequenceNumber: seqIndex + 1 });
+          }
+        }
+
+        if (sequencesForThisBatch.length > 0) {
+          try {
+            // Use bulk processing API
+            const bulkResponse = processingMode === 'fast'
+              ? await predictRulForAssetBulkFast(assetIdForSim, sequencesForThisBatch)
+              : await predictRulForAssetBulk(assetIdForSim, sequencesForThisBatch);
+
+            const { predictions } = bulkResponse.data;
+
+            const newResults = predictions.map((prediction: any, indexInBatch: number) => {
+              const metadata = metadataForThisBatch[indexInBatch];
+              const rawRul = prediction.predicted_rul;
+              const adjustedRul = rawRul > 0 ? calculateRealWorldRul(rawRul) : 0;
+              
+              return {
+                sequenceNumber: metadata.sequenceNumber,
+                predictedRul: adjustedRul, // Apply real-world adjustment
+                timestamp: new Date().toISOString(),
+                error: prediction.error || (rawRul <= 0 ? 'Invalid prediction result' : undefined)
+              };
+            });
+
+            setSimulationResults(prev => [...prev, ...newResults]);
+            
+            // Force a small delay to allow chart to update
+            await new Promise(resolve => setTimeout(resolve, 50));
+          } catch (error: any) {
+            console.error('Bulk processing API error:', error);
+            const errorMsg = error.response?.data?.detail || error.message || 'Unknown API error';
+            
+            // Create error results for this batch
+            const errorResults = metadataForThisBatch.map(metadata => ({
+              sequenceNumber: metadata.sequenceNumber,
+              predictedRul: 0,
+              timestamp: new Date().toISOString(),
+              error: `API Error: ${errorMsg}`
+            }));
+            
+            setSimulationResults(prev => [...prev, ...errorResults]);
+          }
+        }
+
+        // Add small delay between batches for UI responsiveness
+        if (batchIndex < batches.length - 1 && processingMode === 'standard') {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      const endTime = Date.now();
+      const duration = processingStartTime ? (endTime - processingStartTime) / 1000 : 0;
+      const processedCount = simulationResults.length;
+      const errorCount = simulationResults.filter(r => r.error).length;
+      
+      setSimulationProgressText(
+        `Simulation completed! Processed ${processedCount} sequences in ${duration.toFixed(1)}s. ${errorCount > 0 ? `${errorCount} errors encountered.` : 'All successful!'}`
+      );
+    } catch (err: any) {
+      if (err.message === 'Simulation stopped by user') {
+        setSimulationProgressText('Simulation stopped by user.');
+      } else {
+        setUploadError(`Simulation failed: ${err.message}`);
+        setSimulationProgressText('Simulation failed.');
+      }
+    } finally {
+      setIsProcessing(false);
+      setSimulationAbortController(null);
+    }
+  };
+
+  // Stop simulation
+  const handleStopSimulation = () => {
+    if (simulationAbortController) {
+      simulationAbortController.abort();
+      setSimulationAbortController(null);
+      setIsProcessing(false);
+      setSimulationProgressText('Simulation stopped by user.');
+    }
+  };
+
   if (assetsLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-[#F8F9FB]">
@@ -278,7 +562,7 @@ const DashboardPage = () => {
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="h-8 w-8 rounded-lg bg-blue-100 flex items-center justify-center">
-                      <Database className="h-4 w-4 text-blue-600" />
+                      <BarChart3 className="h-4 w-4 text-blue-600" />
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -372,10 +656,17 @@ const DashboardPage = () => {
                             <p className="text-xs text-gray-500 truncate" title={`ID: ${asset.id}`}>ID: {String(asset.id).substring(0, 12)}...</p>
                           </div>
                           <div className="text-right flex-shrink-0 ml-2">
-                            <p className={`text-sm font-semibold ${asset.adjusted_rul && asset.adjusted_rul <= 100 ? 'text-red-600' : asset.adjusted_rul && asset.adjusted_rul <= 500 ? 'text-yellow-600' : 'text-green-600'}`}>
-                              {asset.adjusted_rul ? Math.round(asset.adjusted_rul).toLocaleString() : 'N/A'}
-                            </p>
-                            <p className="text-xs text-gray-400">RUL (hrs)</p>
+                            {(() => {
+                              const rulDisplay = formatRulDisplay(asset.adjusted_rul);
+                              return (
+                                <>
+                                  <p className={`text-sm font-semibold ${asset.adjusted_rul && asset.adjusted_rul <= 100 ? 'text-red-600' : asset.adjusted_rul && asset.adjusted_rul <= 500 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                    {rulDisplay.value}
+                                  </p>
+                                  <p className="text-xs text-gray-400">RUL ({rulDisplay.unit})</p>
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       ))
@@ -481,10 +772,421 @@ const DashboardPage = () => {
                         'N/A'}x
                     </p>
                   </div>
+                  <div className="mt-4 pt-3 border-t border-gray-200">
+                    <p className="text-gray-600 text-sm mb-2">Example RUL Display:</p>
+                    {(() => {
+                      // Show examples for different RUL values
+                      const exampleValues = [100, 1000, 10000]; // hours
+                      return (
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          {exampleValues.map((baseRul) => {
+                            const adjustedRul = (pRealWorld > 0 && rpmReal > 0) ? 
+                              baseRul * Math.pow(7.115 / pRealWorld, 3) * (1775 / rpmReal) * combinedKStar : 
+                              baseRul;
+                            const display = formatRulDisplay(adjustedRul);
+                            return (
+                              <div key={baseRul} className="text-center">
+                                <p className="text-gray-500">{baseRul}h →</p>
+                                <p className="font-medium text-purple-600">{display.fullText}</p>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </div>
                   <p className="text-xs text-gray-500 mt-2">
-                    All RUL values shown throughout the dashboard are adjusted using these factors.
+                    All RUL values shown throughout the dashboard are adjusted using these factors and displayed in the most appropriate time unit.
                   </p>
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* CSV Upload and Simulation Card */}
+            <Card className="bg-white rounded-xl shadow-sm border-0">
+              <CardHeader>
+                <CardTitle className="text-xl font-semibold flex items-center">
+                  <Upload className="h-5 w-5 mr-2 text-green-600" />
+                  CSV Data Upload & RUL Simulation
+                </CardTitle>
+                <CardDescription>
+                  Upload sensor data CSV files and run RUL predictions. Results will use the real-world adjustment factors above.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* File Upload Section */}
+                <div className="space-y-3">
+                  <div>
+                    <label htmlFor="csv-file" className="text-sm font-medium text-gray-700 block mb-1">
+                      Select CSV File
+                    </label>
+                    <input
+                      id="csv-file"
+                      type="file"
+                      accept=".csv"
+                      onChange={handleFileChange}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                    />
+                  </div>
+                  {selectedFile && (
+                    <p className="text-sm text-gray-600">Selected: {selectedFile.name}</p>
+                  )}
+                  
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={handleParseCsv}
+                      disabled={!selectedFile || isParsing}
+                      className="gap-2"
+                      variant="outline"
+                    >
+                      {isParsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                      {isParsing ? 'Parsing...' : 'Parse CSV'}
+                    </Button>
+                    
+                    {/* Advanced Mode Toggle */}
+                    <div className="flex items-center gap-2 ml-auto">
+                      <Switch
+                        id="advanced-mode"
+                        checked={advancedMode}
+                        onCheckedChange={setAdvancedMode}
+                      />
+                      <Label htmlFor="advanced-mode" className="text-sm">Advanced Mode</Label>
+                    </div>
+                  </div>
+
+                  {/* Advanced Options */}
+                  {advancedMode && parsedData && (
+                    <div className="space-y-3 p-3 bg-gray-50 rounded border">
+                      <h4 className="text-sm font-semibold text-gray-700">Processing Options</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="processing-mode" className="text-xs text-gray-600">Processing Mode</Label>
+                          <Select value={processingMode} onValueChange={(value: 'fast' | 'standard') => setProcessingMode(value)}>
+                            <SelectTrigger id="processing-mode" className="h-8">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="fast">Fast</SelectItem>
+                              <SelectItem value="standard">Standard</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div>
+                          <Label htmlFor="batch-size" className="text-xs text-gray-600">Batch Size</Label>
+                          <Input
+                            id="batch-size"
+                            type="number"
+                            value={batchSize}
+                            onChange={(e) => setBatchSize(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                            className="h-8"
+                            min="1"
+                            max="100"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 pt-2">
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            id="real-time-chart"
+                            checked={showRealTimeChart}
+                            onCheckedChange={setShowRealTimeChart}
+                          />
+                          <Label htmlFor="real-time-chart" className="text-xs text-gray-600">Show Real-time Chart</Label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error Display */}
+                  {uploadError && (
+                    <div className="text-red-600 text-sm p-3 bg-red-50 rounded border border-red-200">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-semibold">Error</p>
+                          <p>{uploadError}</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Validation Warnings */}
+                  {!uploadError && (validationWarnings.length > 0 || droppedRowCount > 0) && (
+                    <div className="text-orange-600 text-sm p-3 bg-orange-50 rounded border border-orange-200">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4" />
+                          <span className="font-semibold">Data Validation Notice</span>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowValidationDetails(!showValidationDetails)}
+                          className="text-orange-600 hover:text-orange-700 p-0 h-auto"
+                        >
+                          {showValidationDetails ? 'Hide Details' : 'Show Details'}
+                          {showValidationDetails ? <ChevronUp className="h-4 w-4 ml-1" /> : <ChevronDown className="h-4 w-4 ml-1" />}
+                        </Button>
+                      </div>
+                      <p className="mt-1">
+                        {droppedRowCount > 0 && `${droppedRowCount} row(s) were dropped due to errors. `}
+                        {validationWarnings.length > 0 && `Encountered ${validationWarnings.length} warning(s).`}
+                      </p>
+                      
+                      {showValidationDetails && validationWarnings.length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-orange-200">
+                          <p className="text-xs mb-1">All validation warnings:</p>
+                          <ul className="list-disc list-inside space-y-1 max-h-32 overflow-y-auto text-xs bg-white p-2 rounded border">
+                            {validationWarnings.map((warning, index) => (
+                              <li key={index}>{warning}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Simulation Section */}
+                {parsedData && parsedData.length > 0 && (
+                  <div className="space-y-3 border-t pt-4">
+                    <div>
+                      <label htmlFor="asset-id" className="text-sm font-medium text-gray-700 block mb-1">
+                        Asset ID for Simulation
+                      </label>
+                      <Input
+                        id="asset-id"
+                        type="text"
+                        value={assetIdForSim}
+                        onChange={(e) => setAssetIdForSim(e.target.value)}
+                        placeholder="Enter Asset ID (e.g., a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11)"
+                        disabled={isProcessing}
+                      />
+                    </div>
+
+                    <div className="text-sm text-gray-600 p-3 bg-blue-50 rounded border border-blue-200">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p><strong>Data loaded:</strong> {parsedData.length} rows</p>
+                          <p><strong>Sequences available:</strong> {Math.floor(parsedData.length / SEQUENCE_LENGTH)}</p>
+                        </div>
+                        <div>
+                          <p><strong>Required columns:</strong> ✓ Found</p>
+                          <p><strong>Processing mode:</strong> {processingMode}</p>
+                          {advancedMode && <p><strong>Batch size:</strong> {batchSize}</p>}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleStartSimulation}
+                        disabled={isProcessing || !parsedData || parsedData.length < SEQUENCE_LENGTH || !assetIdForSim.trim()}
+                        className="gap-2"
+                      >
+                        {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                        {isProcessing ? 'Running...' : `Start Simulation (${Math.floor((parsedData?.length || 0) / SEQUENCE_LENGTH)} sequences)`}
+                      </Button>
+                      {isProcessing && (
+                        <Button
+                          onClick={handleStopSimulation}
+                          variant="destructive"
+                          className="gap-2"
+                        >
+                          <Square className="h-4 w-4" />
+                          Stop
+                        </Button>
+                      )}
+                      {simulationResults.length > 0 && (
+                        <Button
+                          onClick={handleExportSimulationData}
+                          variant="outline"
+                          className="gap-2"
+                        >
+                          <Download className="h-4 w-4" />
+                          Export Results
+                        </Button>
+                      )}
+                    </div>
+
+                    {simulationProgressText && (
+                      <div className="text-blue-600 text-sm p-3 bg-blue-50 rounded border border-blue-200">
+                        <div className="flex items-center gap-2">
+                          {isProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
+                          {simulationProgressText}
+                        </div>
+                      </div>
+                    )}
+
+                    {simulationResults.length > 0 && (
+                      <div className="space-y-4">
+                        {/* Real-Time Statistics */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm font-medium text-blue-700">Processed</p>
+                                  <p className="text-2xl font-bold text-blue-900">
+                                    {simulationResults.length}
+                                  </p>
+                                </div>
+                                <CheckCircle className="h-8 w-8 text-blue-600" />
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm font-medium text-green-700">Avg RUL</p>
+                                  <p className="text-2xl font-bold text-green-900">
+                                    {(() => {
+                                      const validResults = simulationResults.filter(r => !r.error && r.predictedRul > 0);
+                                      if (validResults.length === 0) return '0';
+                                      const avg = validResults.reduce((sum, r) => sum + r.predictedRul, 0) / validResults.length;
+                                      const avgDisplay = formatRulDisplay(avg);
+                                      return avgDisplay.value;
+                                    })()}
+                                  </p>
+                                  <p className="text-xs text-green-600">
+                                    {(() => {
+                                      const validResults = simulationResults.filter(r => !r.error && r.predictedRul > 0);
+                                      if (validResults.length === 0) return '';
+                                      const avg = validResults.reduce((sum, r) => sum + r.predictedRul, 0) / validResults.length;
+                                      const avgDisplay = formatRulDisplay(avg);
+                                      return avgDisplay.unit;
+                                    })()}
+                                  </p>
+                                </div>
+                                <TrendingUp className="h-8 w-8 text-green-600" />
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm font-medium text-purple-700">Min RUL</p>
+                                  <p className="text-2xl font-bold text-purple-900">
+                                    {(() => {
+                                      const validResults = simulationResults.filter(r => !r.error && r.predictedRul > 0);
+                                      if (validResults.length === 0) return '0';
+                                      const min = Math.min(...validResults.map(r => r.predictedRul));
+                                      const minDisplay = formatRulDisplay(min);
+                                      return minDisplay.value;
+                                    })()}
+                                  </p>
+                                  <p className="text-xs text-purple-600">
+                                    {(() => {
+                                      const validResults = simulationResults.filter(r => !r.error && r.predictedRul > 0);
+                                      if (validResults.length === 0) return '';
+                                      const min = Math.min(...validResults.map(r => r.predictedRul));
+                                      const minDisplay = formatRulDisplay(min);
+                                      return minDisplay.unit;
+                                    })()}
+                                  </p>
+                                </div>
+                                <AlertTriangle className="h-8 w-8 text-purple-600" />
+                              </div>
+                            </CardContent>
+                          </Card>
+
+                          <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-sm font-medium text-orange-700">Errors</p>
+                                  <p className="text-2xl font-bold text-orange-900">
+                                    {simulationResults.filter(r => r.error).length}
+                                  </p>
+                                  <p className="text-xs text-orange-600">
+                                    {simulationResults.length > 0 ? 
+                                      `${((simulationResults.filter(r => r.error).length / simulationResults.length) * 100).toFixed(1)}%` : 
+                                      '0%'
+                                    }
+                                  </p>
+                                </div>
+                                <AlertTriangle className="h-8 w-8 text-orange-600" />
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </div>
+
+                        {/* Real-Time Chart */}
+                        {showRealTimeChart && (
+                          <Card className="bg-white rounded-xl shadow-sm border-0">
+                            <CardHeader>
+                              <CardTitle className="text-lg font-semibold flex items-center">
+                                <TrendingUp className="h-5 w-5 mr-2 text-blue-600" />
+                                Real-Time RUL Predictions
+                                {isProcessing && (
+                                  <span className="ml-2 flex items-center text-sm text-blue-600">
+                                    <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                                    Live
+                                  </span>
+                                )}
+                              </CardTitle>
+                              <CardDescription>
+                                Time series visualization of RUL predictions as they are generated (showing last 50 points)
+                              </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                              <div className="h-80 w-full">
+                                <RealTimeProgressChart 
+                                  data={simulationResults.filter(r => !r.error)} 
+                                  isProcessing={isProcessing}
+                                  displayBatchSize={50} // Show last 50 points for performance
+                                />
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+
+                        {/* Results Summary */}
+                        <h4 className="text-md font-semibold text-gray-800">
+                          Simulation Results ({simulationResults.length})
+                          {simulationResults.some(r => r.error) && (
+                            <span className="text-red-600 text-sm font-normal ml-2">
+                              ({simulationResults.filter(r => r.error).length} errors)
+                            </span>
+                          )}
+                        </h4>
+                        <div className="max-h-60 overflow-y-auto border border-gray-200 rounded p-3 bg-gray-50">
+                          <div className="space-y-1">
+                            {simulationResults.slice(-15).reverse().map((result) => {
+                              const rulDisplay = formatRulDisplay(result.predictedRul);
+                              return (
+                                <div key={result.sequenceNumber} className="flex justify-between items-center text-sm py-1 border-b border-gray-100 last:border-b-0">
+                                  <span className="font-medium">Seq {result.sequenceNumber}:</span>
+                                  {result.error ? (
+                                    <span className="text-red-600 text-xs">Error: {result.error}</span>
+                                  ) : (
+                                    <div className="text-right">
+                                      <span className="text-green-700 font-medium">
+                                        {rulDisplay.fullText}
+                                      </span>
+                                      <span className="text-gray-500 text-xs ml-2">
+                                        ({result.predictedRul.toFixed(1)}h)
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {simulationResults.length > 15 && (
+                            <p className="text-xs text-gray-500 mt-2 pt-2 border-t">
+                              Showing last 15 results. Use Export to get all {simulationResults.length} results.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -500,7 +1202,20 @@ const DashboardPage = () => {
                 <div className="flex items-center justify-between p-3 bg-white/10 rounded-lg">
                   <div>
                     <p className="text-sm text-blue-200">Average RUL</p>
-                    <p className="text-2xl font-bold">{avgRul.toLocaleString()}</p>
+                    {(() => {
+                      const avgRulDisplay = formatRulDisplay(avgRul);
+                      return (
+                        <div>
+                          <p className="text-2xl font-bold">
+                            {avgRulDisplay.value}
+                            <span className="text-lg text-blue-200 ml-1">{avgRulDisplay.unit}</span>
+                          </p>
+                          <p className="text-xs text-blue-300 mt-1">
+                            ({avgRul.toLocaleString()} hrs)
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
                   <TrendingUp className="h-6 w-6 text-blue-200" />
                 </div>
@@ -509,7 +1224,7 @@ const DashboardPage = () => {
                     <p className="text-sm text-blue-200">Total Assets</p>
                     <p className="text-2xl font-bold">{totalAssets}</p>
                   </div>
-                  <Database className="h-6 w-6 text-blue-200" />
+                  <BarChart3 className="h-6 w-6 text-blue-200" />
                 </div>
               </CardContent>
             </Card>
@@ -518,7 +1233,7 @@ const DashboardPage = () => {
             <Card className="bg-white rounded-xl shadow-sm border-0">
               <CardHeader>
                 <CardTitle className="text-xl font-semibold">Asset Overview</CardTitle>
-                <CardDescription>Details for all {totalAssets} assets with real-world adjusted RUL. Click to view more.</CardDescription>
+                <CardDescription>Details for all {totalAssets} assets with real-world adjusted RUL. Time units automatically adapt for readability. Click to view more.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-1 max-h-[400px] overflow-y-auto pr-2">
@@ -548,13 +1263,25 @@ const DashboardPage = () => {
                             <p className="text-xs text-gray-500 truncate" title={`ID: ${asset.id}`}>ID: {String(asset.id).substring(0, 12)}...</p>
                           </div>
                           <div className="text-right flex-shrink-0 ml-2">
-                            <p className={`text-sm font-semibold ${asset.adjusted_rul === null || asset.adjusted_rul === undefined ? 'text-gray-500' :
-                                             asset.adjusted_rul <= 100 ? 'text-red-600' :
-                                             asset.adjusted_rul <= 500 ? 'text-yellow-600' :
-                                             'text-green-600'}`}>
-                              {asset.adjusted_rul !== null && asset.adjusted_rul !== undefined ? Math.round(asset.adjusted_rul).toLocaleString() : 'N/A'}
-                            </p>
-                            <p className="text-xs text-gray-400">RUL (hrs)</p>
+                            {(() => {
+                              const rulDisplay = formatRulDisplay(asset.adjusted_rul);
+                              return (
+                                <>
+                                  <p className={`text-sm font-semibold ${asset.adjusted_rul === null || asset.adjusted_rul === undefined ? 'text-gray-500' :
+                                                   asset.adjusted_rul <= 100 ? 'text-red-600' :
+                                                   asset.adjusted_rul <= 500 ? 'text-yellow-600' :
+                                                   'text-green-600'}`}>
+                                    {rulDisplay.value}
+                                  </p>
+                                  <p className="text-xs text-gray-400">RUL ({rulDisplay.unit})</p>
+                                  {asset.adjusted_rul !== null && asset.adjusted_rul !== undefined && (
+                                    <p className="text-xs text-gray-300 mt-0.5">
+                                      {asset.adjusted_rul.toFixed(1)}h raw
+                                    </p>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       ))
@@ -577,38 +1304,11 @@ const DashboardPage = () => {
                   </div>
                   <div className="space-y-1">
                     <p className="text-xs text-gray-500">Model Version</p>
-                    <p className="text-lg font-bold text-gray-900">FleetRULNet</p>
+                    <p className="text-lg font-bold text-gray-900">V0.1</p>
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-white rounded-xl shadow-sm border-0">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="h-8 w-8 rounded-lg bg-green-100 flex items-center justify-center">
-                      <Database className="h-4 w-4 text-green-600" />
-                    </div>
-                    <span className="text-xs text-gray-400">2024-06-01</span>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-gray-500">Last Retrained</p>
-                    <p className="text-lg font-bold text-gray-900">June 1, 2024</p>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card className="bg-white rounded-xl shadow-sm border-0">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="h-8 w-8 rounded-lg bg-yellow-100 flex items-center justify-center">
-                      <Upload className="h-4 w-4 text-yellow-600" />
-                    </div>
-                    <span className="text-xs text-gray-400">SensorNet v5</span>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs text-gray-500">Data Source</p>
-                    <p className="text-lg font-bold text-gray-900">Edge Sensors</p>
-                  </div>
-                </CardContent>
-              </Card>
+
             </div>
           </div>
         </div>
