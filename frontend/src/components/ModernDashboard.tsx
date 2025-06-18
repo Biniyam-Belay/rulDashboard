@@ -117,9 +117,9 @@ const DashboardPage = () => {
     adjusted_rul: asset.latest_rul ? calculateRealWorldRul(asset.latest_rul) : null
   })) ?? [];
 
-  const criticalAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? Infinity) <= 100).length; // 100 hrs = ~4 days critical
-  const warningAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? Infinity) > 100 && (a.adjusted_rul ?? 0) <= 500).length; // 100-500 hrs warning
-  const healthyAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? 0) > 500).length; // >500 hrs healthy
+  const criticalAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? Infinity) <= 168).length; // 168 hrs = ~7 days critical
+  const warningAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? Infinity) > 168 && (a.adjusted_rul ?? 0) <= 720).length; // 168-720 hrs = 7-30 days warning  
+  const healthyAssets = assetsWithAdjustedRul.filter(a => (a.adjusted_rul ?? 0) > 720).length; // >720 hrs = >30 days healthy
   const avgRul = assetsWithAdjustedRul && totalAssets > 0 ? Math.round(assetsWithAdjustedRul.reduce((sum, a) => sum + (a.adjusted_rul ?? 0), 0) / totalAssets) : 0;
 
   // CSV Processing States
@@ -381,6 +381,8 @@ const DashboardPage = () => {
 
     const totalSequences = Math.floor(parsedData.length / SEQUENCE_LENGTH);
     const batches = [];
+    let totalProcessedCount = 0;
+    let totalErrorCount = 0;
     
     // Create batches for processing
     for (let i = 0; i < totalSequences; i += batchSize) {
@@ -425,6 +427,12 @@ const DashboardPage = () => {
               const metadata = metadataForThisBatch[indexInBatch];
               const rawRul = prediction.predicted_rul;
               const adjustedRul = rawRul > 0 ? calculateRealWorldRul(rawRul) : 0;
+              const hasError = prediction.error || rawRul <= 0;
+              
+              totalProcessedCount++;
+              if (hasError) {
+                totalErrorCount++;
+              }
               
               return {
                 sequenceNumber: metadata.sequenceNumber,
@@ -443,12 +451,16 @@ const DashboardPage = () => {
             const errorMsg = error.response?.data?.detail || error.message || 'Unknown API error';
             
             // Create error results for this batch
-            const errorResults = metadataForThisBatch.map(metadata => ({
-              sequenceNumber: metadata.sequenceNumber,
-              predictedRul: 0,
-              timestamp: new Date().toISOString(),
-              error: `API Error: ${errorMsg}`
-            }));
+            const errorResults = metadataForThisBatch.map(metadata => {
+              totalProcessedCount++;
+              totalErrorCount++;
+              return {
+                sequenceNumber: metadata.sequenceNumber,
+                predictedRul: 0,
+                timestamp: new Date().toISOString(),
+                error: `API Error: ${errorMsg}`
+              };
+            });
             
             setSimulationResults(prev => [...prev, ...errorResults]);
           }
@@ -462,11 +474,9 @@ const DashboardPage = () => {
 
       const endTime = Date.now();
       const duration = processingStartTime ? (endTime - processingStartTime) / 1000 : 0;
-      const processedCount = simulationResults.length;
-      const errorCount = simulationResults.filter(r => r.error).length;
       
       setSimulationProgressText(
-        `Simulation completed! Processed ${processedCount} sequences in ${duration.toFixed(1)}s. ${errorCount > 0 ? `${errorCount} errors encountered.` : 'All successful!'}`
+        `Simulation completed! Processed ${totalProcessedCount} sequences in ${duration.toFixed(1)}s. ${totalErrorCount > 0 ? `${totalErrorCount} errors encountered.` : 'All successful!'}`
       );
     } catch (err: any) {
       if (err.message === 'Simulation stopped by user') {
@@ -647,7 +657,7 @@ const DashboardPage = () => {
                              onClick={() => navigate(`/assets/${asset.id}`)}>
                           <span className="text-lg font-bold text-gray-400 w-6 text-center">{idx + 1}</span>
                           <Avatar className="h-8 w-8 flex-shrink-0">
-                            <AvatarFallback className={asset.adjusted_rul && asset.adjusted_rul <= 100 ? 'bg-red-100 text-red-700' : asset.adjusted_rul && asset.adjusted_rul <= 500 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}>
+                            <AvatarFallback className={asset.adjusted_rul && asset.adjusted_rul <= 168 ? 'bg-red-100 text-red-700' : asset.adjusted_rul && asset.adjusted_rul <= 720 ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}>
                               {asset.name ? asset.name.substring(0, 2).toUpperCase() : String(asset.id).substring(0,2).toUpperCase()}
                             </AvatarFallback>
                           </Avatar>
@@ -660,7 +670,7 @@ const DashboardPage = () => {
                               const rulDisplay = formatRulDisplay(asset.adjusted_rul);
                               return (
                                 <>
-                                  <p className={`text-sm font-semibold ${asset.adjusted_rul && asset.adjusted_rul <= 100 ? 'text-red-600' : asset.adjusted_rul && asset.adjusted_rul <= 500 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                  <p className={`text-sm font-semibold ${asset.adjusted_rul && asset.adjusted_rul <= 168 ? 'text-red-600' : asset.adjusted_rul && asset.adjusted_rul <= 720 ? 'text-yellow-600' : 'text-green-600'}`}>
                                     {rulDisplay.value}
                                   </p>
                                   <p className="text-xs text-gray-400">RUL ({rulDisplay.unit})</p>
@@ -771,29 +781,6 @@ const DashboardPage = () => {
                         (Math.pow(7.115 / pRealWorld, 3) * (1775 / rpmReal) * combinedKStar).toFixed(3) : 
                         'N/A'}x
                     </p>
-                  </div>
-                  <div className="mt-4 pt-3 border-t border-gray-200">
-                    <p className="text-gray-600 text-sm mb-2">Example RUL Display:</p>
-                    {(() => {
-                      // Show examples for different RUL values
-                      const exampleValues = [100, 1000, 10000]; // hours
-                      return (
-                        <div className="grid grid-cols-3 gap-2 text-xs">
-                          {exampleValues.map((baseRul) => {
-                            const adjustedRul = (pRealWorld > 0 && rpmReal > 0) ? 
-                              baseRul * Math.pow(7.115 / pRealWorld, 3) * (1775 / rpmReal) * combinedKStar : 
-                              baseRul;
-                            const display = formatRulDisplay(adjustedRul);
-                            return (
-                              <div key={baseRul} className="text-center">
-                                <p className="text-gray-500">{baseRul}h →</p>
-                                <p className="font-medium text-purple-600">{display.fullText}</p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })()}
                   </div>
                   <p className="text-xs text-gray-500 mt-2">
                     All RUL values shown throughout the dashboard are adjusted using these factors and displayed in the most appropriate time unit.
@@ -1144,45 +1131,6 @@ const DashboardPage = () => {
                             </CardContent>
                           </Card>
                         )}
-
-                        {/* Results Summary */}
-                        <h4 className="text-md font-semibold text-gray-800">
-                          Simulation Results ({simulationResults.length})
-                          {simulationResults.some(r => r.error) && (
-                            <span className="text-red-600 text-sm font-normal ml-2">
-                              ({simulationResults.filter(r => r.error).length} errors)
-                            </span>
-                          )}
-                        </h4>
-                        <div className="max-h-60 overflow-y-auto border border-gray-200 rounded p-3 bg-gray-50">
-                          <div className="space-y-1">
-                            {simulationResults.slice(-15).reverse().map((result) => {
-                              const rulDisplay = formatRulDisplay(result.predictedRul);
-                              return (
-                                <div key={result.sequenceNumber} className="flex justify-between items-center text-sm py-1 border-b border-gray-100 last:border-b-0">
-                                  <span className="font-medium">Seq {result.sequenceNumber}:</span>
-                                  {result.error ? (
-                                    <span className="text-red-600 text-xs">Error: {result.error}</span>
-                                  ) : (
-                                    <div className="text-right">
-                                      <span className="text-green-700 font-medium">
-                                        {rulDisplay.fullText}
-                                      </span>
-                                      <span className="text-gray-500 text-xs ml-2">
-                                        ({result.predictedRul.toFixed(1)}h)
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                          {simulationResults.length > 15 && (
-                            <p className="text-xs text-gray-500 mt-2 pt-2 border-t">
-                              Showing last 15 results. Use Export to get all {simulationResults.length} results.
-                            </p>
-                          )}
-                        </div>
                       </div>
                     )}
                   </div>
@@ -1249,8 +1197,8 @@ const DashboardPage = () => {
                           <Avatar className="h-9 w-9 flex-shrink-0">
                             <AvatarFallback 
                               className={asset.adjusted_rul === null || asset.adjusted_rul === undefined ? 'bg-gray-300 text-gray-700' :
-                                         asset.adjusted_rul <= 100 ? 'bg-red-100 text-red-700' :
-                                         asset.adjusted_rul <= 500 ? 'bg-yellow-100 text-yellow-700' :
+                                         asset.adjusted_rul <= 168 ? 'bg-red-100 text-red-700' :
+                                         asset.adjusted_rul <= 720 ? 'bg-yellow-100 text-yellow-700' :
                                          'bg-green-100 text-green-700'}
                             >
                               {asset.name ? asset.name.substring(0, 2).toUpperCase() : String(asset.id).substring(0,2).toUpperCase()}
@@ -1268,8 +1216,8 @@ const DashboardPage = () => {
                               return (
                                 <>
                                   <p className={`text-sm font-semibold ${asset.adjusted_rul === null || asset.adjusted_rul === undefined ? 'text-gray-500' :
-                                                   asset.adjusted_rul <= 100 ? 'text-red-600' :
-                                                   asset.adjusted_rul <= 500 ? 'text-yellow-600' :
+                                                   asset.adjusted_rul <= 168 ? 'text-red-600' :
+                                                   asset.adjusted_rul <= 720 ? 'text-yellow-600' :
                                                    'text-green-600'}`}>
                                     {rulDisplay.value}
                                   </p>

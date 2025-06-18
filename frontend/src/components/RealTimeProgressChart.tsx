@@ -38,9 +38,9 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
       const prevItem = index > 0 ? arr[index - 1] : null;
       const trend = prevItem ? item.predictedRul - prevItem.predictedRul : 0;
       
-      // Define significant event thresholds
-      const SIGNIFICANT_DROP_THRESHOLD = -5000;
-      const SIGNIFICANT_PEAK_THRESHOLD = 5000;
+      // Define significant event thresholds for real-world hours
+      const SIGNIFICANT_DROP_THRESHOLD = -50; // 50 hour drop is significant
+      const SIGNIFICANT_PEAK_THRESHOLD = 50;  // 50 hour increase is significant
       let significantEvent: 'peak' | 'drop' | null = null;
       if (trend < SIGNIFICANT_DROP_THRESHOLD) {
         significantEvent = 'drop';
@@ -62,11 +62,11 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
       }
       
       let healthStatus = 'healthy';
-      if (item.predictedRul <= 20000) {
+      if (item.predictedRul <= 168) {
         healthStatus = 'critical';
-      } else if (item.predictedRul <= 60000) {
+      } else if (item.predictedRul <= 720) {
         healthStatus = 'warning';
-      } else if (degradationRate < -1000) {
+      } else if (degradationRate < -10) { // 10 hours/sequence degradation is concerning
         healthStatus = 'declining';
       }
       
@@ -158,10 +158,10 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
             </div>
           )}
           
-          {Math.abs(tooltipData.degradationRate) > 10 && (
+          {Math.abs(tooltipData.degradationRate) > 1 && (
             <div className="flex justify-between">
               <span className="text-gray-600">Degradation:</span>
-              <span className={`font-medium ${tooltipData.degradationRate < -100 ? 'text-red-600' : 'text-yellow-600'}`}>
+              <span className={`font-medium ${tooltipData.degradationRate < -1 ? 'text-red-600' : 'text-yellow-600'}`}>
                 {tooltipData.degradationRate.toFixed(0)} hrs/seq
               </span>
             </div>
@@ -225,20 +225,20 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
         </div>
         
         <div className={`rounded-xl p-4 ${
-          Math.abs(stats.avgDegradationRate) > 500 ? 'bg-red-100' : 
-          Math.abs(stats.avgDegradationRate) > 100 ? 'bg-amber-100' : 'bg-green-100'
+          Math.abs(stats.avgDegradationRate) > 5 ? 'bg-red-100' : 
+          Math.abs(stats.avgDegradationRate) > 1 ? 'bg-amber-100' : 'bg-green-100'
         }`}>
           <p className={`text-sm font-semibold uppercase tracking-wider ${
-            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-600' : 
-            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-600' : 'text-green-600'
+            Math.abs(stats.avgDegradationRate) > 5 ? 'text-red-600' : 
+            Math.abs(stats.avgDegradationRate) > 1 ? 'text-amber-600' : 'text-green-600'
           }`}>Avg Rate</p>
           <p className={`text-2xl font-bold mt-1 ${
-            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-900' : 
-            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-900' : 'text-green-900'
+            Math.abs(stats.avgDegradationRate) > 5 ? 'text-red-900' : 
+            Math.abs(stats.avgDegradationRate) > 1 ? 'text-amber-900' : 'text-green-900'
           }`}>{stats.avgDegradationRate.toFixed(0)}</p>
           <p className={`text-xs ${
-            Math.abs(stats.avgDegradationRate) > 500 ? 'text-red-500' : 
-            Math.abs(stats.avgDegradationRate) > 100 ? 'text-amber-500' : 'text-green-500'
+            Math.abs(stats.avgDegradationRate) > 5 ? 'text-red-500' : 
+            Math.abs(stats.avgDegradationRate) > 1 ? 'text-amber-500' : 'text-green-500'
           }`}>hrs/sequence</p>
         </div>
       </div>
@@ -277,10 +277,10 @@ const RealTimeProgressChart: React.FC<RealTimeProgressChartProps> = ({ data, isP
               label={{ value: 'Predicted RUL (hrs)', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle', fontSize: '14px', fill: '#374151', fontWeight: '600' } }}
               tickFormatter={(value) => value >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0)}
             />
-            <ReferenceLine y={20000} stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5}
+            <ReferenceLine y={168} stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5}
               label={{ value: "CRITICAL", position: "insideTopRight", style: { fill: '#ef4444', fontSize: '10px', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.8)', padding: '2px 4px', borderRadius: '2px' } }}
             />
-            <ReferenceLine y={60000} stroke="#f97316" strokeDasharray="6 3" strokeWidth={1.5}
+            <ReferenceLine y={720} stroke="#f97316" strokeDasharray="6 3" strokeWidth={1.5}
               label={{ value: "WARNING", position: "insideTopRight", style: { fill: '#f97316', fontSize: '10px', fontWeight: 'bold', backgroundColor: 'rgba(255,255,255,0.8)', padding: '2px 4px', borderRadius: '2px' } }}
             />
             <Tooltip content={<CustomTooltip />} wrapperStyle={{ outline: 'none', border: '1px solid #e5e7eb', borderRadius: '0.5rem', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' }} cursor={{ stroke: '#4f46e5', strokeWidth: 1, strokeDasharray: '3 3' }} />

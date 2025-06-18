@@ -7,8 +7,8 @@ interface AlertsPanelProps {
 }
 
 const AlertsPanel: React.FC<AlertsPanelProps> = ({ predictions, onDismissAlert }) => {
-  const criticalPredictions = predictions.filter(p => p.predictedRul < 20000);
-  const warningPredictions = predictions.filter(p => p.predictedRul >= 20000 && p.predictedRul < 60000);
+  const criticalPredictions = predictions.filter(p => p.predictedRul < 168);
+  const warningPredictions = predictions.filter(p => p.predictedRul >= 168 && p.predictedRul < 720);
 
   const alerts = [
     ...criticalPredictions.map(p => ({

@@ -19,10 +19,10 @@ interface FleetRulDistributionChartProps {
 
 const FleetRulDistributionChart: React.FC<FleetRulDistributionChartProps> = ({ assets }) => {
   const rulBins = [
-    { name: 'Critical', shortName: 'Critical (0-20k)', range: [0, 20000], color: '#dc2626', bgColor: '#fef2f2' },
-    { name: 'Warning', shortName: 'Warning (20k-60k)', range: [20001, 60000], color: '#d97706', bgColor: '#fffbeb' },
-    { name: 'Caution', shortName: 'Caution (60k-100k)', range: [60001, 100000], color: '#ca8a04', bgColor: '#fefce8' },
-    { name: 'Healthy', shortName: 'Healthy (100k+)', range: [100001, Infinity], color: '#059669', bgColor: '#f0fdf4' },
+    { name: 'Critical', shortName: 'Critical (0-168h)', range: [0, 168], color: '#dc2626', bgColor: '#fef2f2' },
+    { name: 'Warning', shortName: 'Warning (168-720h)', range: [169, 720], color: '#d97706', bgColor: '#fffbeb' },
+    { name: 'Caution', shortName: 'Caution (720-2160h)', range: [721, 2160], color: '#ca8a04', bgColor: '#fefce8' },
+    { name: 'Healthy', shortName: 'Healthy (2160h+)', range: [2161, Infinity], color: '#059669', bgColor: '#f0fdf4' },
   ];
 
   const { distributionData, totalAssets, avgRul, healthPercentage } = useMemo(() => {

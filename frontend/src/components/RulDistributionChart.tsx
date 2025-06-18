@@ -15,13 +15,13 @@ interface RulDistributionProps {
 }
 
 const RulDistributionChart: React.FC<RulDistributionProps> = ({ predictions }) => {
-  // Enhanced bins with better categorization
+  // Enhanced bins with better categorization for real-world hours
   const bins = [
-    { range: '0-20k', min: 0, max: 20000, color: '#dc2626', darkColor: '#991b1b', label: 'Critical', icon: '🔴' },
-    { range: '20k-40k', min: 20000, max: 40000, color: '#ea580c', darkColor: '#c2410c', label: 'High Risk', icon: '🟠' },
-    { range: '40k-60k', min: 40000, max: 60000, color: '#ca8a04', darkColor: '#a16207', label: 'Medium Risk', icon: '🟡' },
-    { range: '60k-80k', min: 60000, max: 80000, color: '#16a34a', darkColor: '#15803d', label: 'Low Risk', icon: '🟢' },
-    { range: '80k+', min: 80000, max: Infinity, color: '#059669', darkColor: '#047857', label: 'Optimal', icon: '💚' }
+    { range: '0-168h', min: 0, max: 168, color: '#dc2626', darkColor: '#991b1b', label: 'Critical', icon: '🔴' },
+    { range: '168-720h', min: 168, max: 720, color: '#ea580c', darkColor: '#c2410c', label: 'Warning', icon: '🟠' },
+    { range: '720-2160h', min: 720, max: 2160, color: '#ca8a04', darkColor: '#a16207', label: 'Caution', icon: '🟡' },
+    { range: '2160-4320h', min: 2160, max: 4320, color: '#16a34a', darkColor: '#15803d', label: 'Good', icon: '🟢' },
+    { range: '4320h+', min: 4320, max: Infinity, color: '#059669', darkColor: '#047857', label: 'Optimal', icon: '💚' }
   ];
 
   const { distributionData, totalCount, riskSummary } = useMemo(() => {
